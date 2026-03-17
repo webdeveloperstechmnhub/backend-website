@@ -11,9 +11,14 @@ exports.createOrder = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ msg: "User not found" });
 
-    const amount = user.amountPaid;
-    if (!amount)
+    const amount = Number(user.amountPaid);
+    if (!Number.isFinite(amount) || amount < 0) {
       return res.status(400).json({ msg: "Amount not set for this user" });
+    }
+
+    if (amount === 0) {
+      return res.status(400).json({ msg: "No payment required for free ticket" });
+    }
 
     const order = await razorpay.orders.create({
       amount: amount * 100,
