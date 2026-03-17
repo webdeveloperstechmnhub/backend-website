@@ -29,14 +29,12 @@ app.use(
       "http://localhost:8080",      // For ticket generator
       "http://127.0.0.1:8080",      // For ticket generator
       "null",                        // For file:// protocol
-      "https://techmnhub-gamma.vercel.app",
-      "https://techmnhub-admin.vercel.app",
       "https://techmnhub.com",
       "https://www.techmnhub.com",
-      "https://checkin-system-techmnhub.tpriyansh973.workers.dev",
-      "https://ticket-generator.tpriyansh973.workers.dev",
-      "https://techmnhub-1.pages.dev",
-      "https://techmnhub-frontend.pages.dev"
+      "https://ticket-generator.pages.dev",     //for ticket generator
+      "https://checkin-system.pages.dev",      //for checkin system
+      "https://admin-techmnhub.pages.dev",
+      "https://frontend-techmnhub.pages.dev"
     ],
     credentials: true,
   }),
