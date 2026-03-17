@@ -31,7 +31,7 @@ app.use(
       "null",                        // For file:// protocol
       "https://techmnhub.com",
       "https://www.techmnhub.com",
-      "https://ticket-generator.pages.dev",     //for ticket generator
+      "https://tickets-generator.pages.dev",     //for ticket generator
       "https://checkin-system.pages.dev",      //for checkin system
       "https://admin-techmnhub.pages.dev",
       "https://frontend-techmnhub.pages.dev"
