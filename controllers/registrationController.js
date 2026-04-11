@@ -1,7 +1,5 @@
-const User = require('../models/User');
-const Event = require('../models/Event');
-const generateQR = require('../utils/generateQR');
-const sendTicketEmail = require('../utils/sendTicketEmail');
+const User = require('../../../website/backend - webdevs/models/User');
+const Event = require('../../../website/backend - webdevs/models/Event');
 
 const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -199,12 +197,10 @@ exports.registerUser = async (req, res) => {
 
     const numericAmountPaid = Number(amountPaid);
 
-    // amountPaid can be 0 for free tickets, but cannot be negative or invalid.
-    if (!Number.isFinite(numericAmountPaid) || numericAmountPaid < 0) {
+    // 👇 Validate amountPaid
+    if (!numericAmountPaid || numericAmountPaid <= 0) {
       return res.status(400).json({ msg: 'Valid amountPaid is required' });
     }
-
-    const isFreeRegistration = numericAmountPaid === 0;
 
     let user = await User.findOne({ email });
     const normalizedTicketTypes = targetEvent ? normalizeEventTicketTypes(targetEvent) : [];
@@ -263,34 +259,9 @@ exports.registerUser = async (req, res) => {
         eventShortName: eventShortName || user.eventShortName || 'Zonex 2026',
         referralCode, 
       });
-
-      if (isFreeRegistration) {
-        user.paymentStatus = 'paid';
-        user.paymentId = `FREE_${Date.now()}`;
-        if (!user.registrationId) {
-          user.registrationId = `ZNX-${Date.now()}`;
-        }
-        user.qrCode = await generateQR(user.registrationId);
-      } else {
-        user.paymentStatus = 'pending';
-      }
       
       await user.save();
-
-      let emailFailed = false;
-      if (isFreeRegistration) {
-        try {
-          await sendTicketEmail(user);
-        } catch (emailErr) {
-          emailFailed = true;
-          console.error('FREE REGISTRATION EMAIL ERROR:', emailErr);
-        }
-      }
-
-      return res.status(200).json({
-        ...user.toObject(),
-        emailFailed,
-      });
+      return res.status(200).json(user);
     }
 
     // Generate registration ID
@@ -312,31 +283,12 @@ exports.registerUser = async (req, res) => {
       eventId: eventId || null,
       eventShortName: eventShortName || 'Zonex 2026',
       registrationId,
-      paymentStatus: isFreeRegistration ? 'paid' : 'pending',
-      paymentId: isFreeRegistration ? `FREE_${Date.now()}` : undefined,
+      paymentStatus: 'pending',
       referralCode, 
     });
 
-    if (isFreeRegistration) {
-      user.qrCode = await generateQR(registrationId);
-    }
-
     await user.save();
-
-    let emailFailed = false;
-    if (isFreeRegistration) {
-      try {
-        await sendTicketEmail(user);
-      } catch (emailErr) {
-        emailFailed = true;
-        console.error('FREE REGISTRATION EMAIL ERROR:', emailErr);
-      }
-    }
-
-    res.status(201).json({
-      ...user.toObject(),
-      emailFailed,
-    });
+    res.status(201).json(user);
 
   } catch (err) {
     console.error('REGISTER ERROR:', err);

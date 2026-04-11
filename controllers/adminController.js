@@ -1,4 +1,4 @@
-const User = require('../models/User');
+const User = require('../../../website/backend - webdevs/models/User');
 const jwt = require('jsonwebtoken');
 
 // @desc    Admin Login

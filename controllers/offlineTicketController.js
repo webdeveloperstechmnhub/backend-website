@@ -46,8 +46,7 @@ exports.generateOfflineTicket = async (req, res) => {
       return res.status(400).json({ msg: "Invalid mobile number" });
     }
 
-    const requiresActivities = (category || "").trim().toLowerCase() !== "visitor";
-    if (requiresActivities && (!subCategory || subCategory.length === 0)) {
+    if (!subCategory || subCategory.length === 0) {
       return res.status(400).json({ msg: "Please select at least one activity" });
     }
 
@@ -91,7 +90,7 @@ exports.generateOfflineTicket = async (req, res) => {
       college,
       courseYear,
       category,
-      subCategory: Array.isArray(subCategory) ? subCategory : [],
+      subCategory,
       teamMembers: teamMembers || [],
       passName,
       passType: passType || passName,
