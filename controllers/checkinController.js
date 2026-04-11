@@ -1,6 +1,6 @@
-const User = require("../../../website/backend - webdevs/models/User");
-const Employee = require("../../../website/backend - webdevs/models/Employee");
-const generateQR = require("../../../website/backend - webdevs/utils/generateQR");
+const User = require("../models/User");
+const Employee = require("../models/Employee");
+const generateQR = require("../utils/generateQR");
 
 const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
   const empId = String(source.empId || fallbackEmpId || "").trim();

@@ -1,5 +1,5 @@
-const User = require('../../../website/backend - webdevs/models/User');
-const Event = require('../../../website/backend - webdevs/models/Event');
+const User = require('../models/User');
+const Event = require('../models/Event');
 
 const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
