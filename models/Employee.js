@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const employeeSchema = new mongoose.Schema({
   empId: { type: String, required: true, unique: true, index: true },
   name: { type: String, required: true },
+  photoUrl: { type: String, default: "" },
   designation: { type: String, default: "" },
   department: { type: String, default: "" },
   description: { type: String, default: "" },

@@ -8,6 +8,7 @@ const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
   return {
     empId,
     name: String(source.name || "").trim(),
+    photoUrl: String(source.photoUrl || "").trim(),
     designation: String(source.designation || "").trim(),
     department: String(source.department || "").trim(),
     description: String(source.description || "").trim(),
@@ -17,7 +18,7 @@ const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
 // Create or update employee by empId
 exports.upsertEmployee = async (req, res) => {
   try {
-    const { empId, name, designation, department, description } = normalizeEmployeeInput(req.body);
+    const { empId, name, photoUrl, designation, department, description } = normalizeEmployeeInput(req.body);
 
     if (!empId || !name) {
       return res.status(400).json({ msg: "empId and name are required" });
@@ -28,6 +29,7 @@ exports.upsertEmployee = async (req, res) => {
       {
         empId,
         name,
+        photoUrl,
         designation,
         department,
         description,
@@ -103,6 +105,7 @@ exports.updateEmployee = async (req, res) => {
       {
         empId,
         name: payload.name,
+        photoUrl: payload.photoUrl,
         designation: payload.designation,
         department: payload.department,
         description: payload.description,
