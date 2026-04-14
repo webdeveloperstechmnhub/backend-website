@@ -40,7 +40,8 @@ app.use(
   }),
 );
 
-app.use(express.json());
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
 // 🔁 Rate Limiting – सिर्फ payment create-order पर ही लगाओ (verify पर नहीं)
 const paymentCreateLimiter = rateLimit({
