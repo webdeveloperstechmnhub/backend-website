@@ -92,18 +92,25 @@ exports.updateEmployee = async (req, res) => {
 
     const payload = normalizeEmployeeInput(req.body, empId);
 
-    if (req.body.empId && String(req.body.empId).trim() !== empId) {
-      return res.status(400).json({ msg: "Employee ID cannot be changed" });
+    if (!payload.empId) {
+      return res.status(400).json({ msg: "empId is required" });
     }
 
     if (!payload.name) {
       return res.status(400).json({ msg: "name is required" });
     }
 
+    if (payload.empId !== empId) {
+      const duplicate = await Employee.findOne({ empId: payload.empId });
+      if (duplicate) {
+        return res.status(409).json({ msg: "Employee ID already exists" });
+      }
+    }
+
     const employee = await Employee.findOneAndUpdate(
       { empId },
       {
-        empId,
+        empId: payload.empId,
         name: payload.name,
         photoUrl: payload.photoUrl,
         designation: payload.designation,
