@@ -4,11 +4,15 @@ const generateQR = require("../utils/generateQR");
 
 const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
   const empId = String(source.empId || fallbackEmpId || "").trim();
+  const normalizedJoiningDate = source.joiningDate ? new Date(source.joiningDate) : null;
 
   return {
     empId,
     name: String(source.name || "").trim(),
     photoUrl: String(source.photoUrl || "").trim(),
+    mobile: String(source.mobile || "").trim(),
+    email: String(source.email || "").trim().toLowerCase(),
+    joiningDate: normalizedJoiningDate && !Number.isNaN(normalizedJoiningDate.getTime()) ? normalizedJoiningDate : null,
     designation: String(source.designation || "").trim(),
     department: String(source.department || "").trim(),
     description: String(source.description || "").trim(),
@@ -18,7 +22,7 @@ const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
 // Create or update employee by empId
 exports.upsertEmployee = async (req, res) => {
   try {
-    const { empId, name, photoUrl, designation, department, description } = normalizeEmployeeInput(req.body);
+    const { empId, name, photoUrl, mobile, email, joiningDate, designation, department, description } = normalizeEmployeeInput(req.body);
 
     if (!empId || !name) {
       return res.status(400).json({ msg: "empId and name are required" });
@@ -30,6 +34,9 @@ exports.upsertEmployee = async (req, res) => {
         empId,
         name,
         photoUrl,
+        mobile,
+        email,
+        joiningDate,
         designation,
         department,
         description,
@@ -53,11 +60,47 @@ exports.upsertEmployee = async (req, res) => {
 
 exports.getEmployees = async (req, res) => {
   try {
-    const employees = await Employee.find()
-      .sort({ updatedAt: -1, createdAt: -1 })
-      .allowDiskUse(true)
-      .lean();
-    res.json(employees);
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
+    const skip = (page - 1) * limit;
+    const queryText = String(req.query.q || "").trim();
+    const sortOrder = String(req.query.sort || "latest").toLowerCase() === "oldest" ? 1 : -1;
+
+    const filter = queryText
+      ? {
+          $or: [
+            { empId: { $regex: queryText, $options: "i" } },
+            { name: { $regex: queryText, $options: "i" } },
+            { email: { $regex: queryText, $options: "i" } },
+            { mobile: { $regex: queryText, $options: "i" } },
+            { designation: { $regex: queryText, $options: "i" } },
+            { department: { $regex: queryText, $options: "i" } },
+          ],
+        }
+      : {};
+
+    const [employees, total] = await Promise.all([
+      Employee.find(filter)
+        .sort({ updatedAt: sortOrder, createdAt: sortOrder })
+        .skip(skip)
+        .limit(limit)
+        .select("empId name photoUrl mobile email joiningDate designation department description updatedAt createdAt")
+        .allowDiskUse(true)
+        .lean(),
+      Employee.countDocuments(filter),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    res.json({
+      items: employees,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    });
   } catch (err) {
     console.error("Employee list error:", err);
     res.status(500).json({ msg: err.message });
@@ -95,27 +138,23 @@ exports.updateEmployee = async (req, res) => {
 
     const payload = normalizeEmployeeInput(req.body, empId);
 
-    if (!payload.empId) {
-      return res.status(400).json({ msg: "empId is required" });
+    if (req.body.empId && String(req.body.empId).trim() !== empId) {
+      return res.status(400).json({ msg: "Employee ID cannot be changed" });
     }
 
     if (!payload.name) {
       return res.status(400).json({ msg: "name is required" });
     }
 
-    if (payload.empId !== empId) {
-      const duplicate = await Employee.findOne({ empId: payload.empId });
-      if (duplicate) {
-        return res.status(409).json({ msg: "Employee ID already exists" });
-      }
-    }
-
     const employee = await Employee.findOneAndUpdate(
       { empId },
       {
-        empId: payload.empId,
+        empId,
         name: payload.name,
         photoUrl: payload.photoUrl,
+        mobile: payload.mobile,
+        email: payload.email,
+        joiningDate: payload.joiningDate,
         designation: payload.designation,
         department: payload.department,
         description: payload.description,

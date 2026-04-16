@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -26,22 +26,25 @@ app.use(
       "http://localhost:5173",
       "http://localhost:5174",
       "http://localhost:3000",
-      "http://localhost:8080",      // For ticket generator
+      "http://localhost:8080",
+      "http://localhost:5175",      // For ticket generator
       "http://127.0.0.1:8080",      // For ticket generator
       "null",                        // For file:// protocol
+      "https://techmnhub-gamma.vercel.app",
+      "https://techmnhub-admin.vercel.app",
       "https://techmnhub.com",
       "https://www.techmnhub.com",
-      "https://tickets-generator.pages.dev",     //for ticket generator
-      "https://checkin-system.pages.dev",      //for checkin system
-      "https://admin-techmnhub.pages.dev",
-      "https://frontend-techmnhub.pages.dev"
+      "https://checkin-system-techmnhub.tpriyansh973.workers.dev",
+      "https://ticket-generator.tpriyansh973.workers.dev",
+      "https://techmnhub-1.pages.dev",
+      "https://techmnhub-frontend.pages.dev"
     ],
     credentials: true,
   }),
 );
 
-app.use(express.json({ limit: "15mb" }));
-app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // 🔁 Rate Limiting – सिर्फ payment create-order पर ही लगाओ (verify पर नहीं)
 const paymentCreateLimiter = rateLimit({

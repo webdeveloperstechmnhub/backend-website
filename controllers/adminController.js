@@ -1,5 +1,7 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const { cloneDatabaseBetweenUris, exportDatabaseData, inferDbName } = require('../utils/databaseCloner');
+const { listDatabaseOverview, getCollectionPreview } = require('../utils/databaseInspector');
 
 // @desc    Admin Login
 exports.login = async (req, res) => {
@@ -122,5 +124,129 @@ exports.getStats = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// @desc    Clone a source database into a destination database
+exports.cloneDatabaseToCurrentDb = async (req, res) => {
+  try {
+    const sourceUri = String(req.body?.sourceUri || '').trim();
+    const sourceDbNameInput = String(req.body?.sourceDbName || '').trim();
+    const destinationUri = String(req.body?.destinationUri || '').trim();
+    const destinationDbNameInput = String(req.body?.destinationDbName || '').trim();
+    const collectionsInput = req.body?.collections;
+
+    const selectedCollections = Array.isArray(collectionsInput)
+      ? collectionsInput.map((name) => String(name || '').trim()).filter(Boolean)
+      : [];
+
+    if (!sourceUri || !destinationUri) {
+      return res.status(400).json({ msg: 'Both source and destination MongoDB URIs are required.' });
+    }
+
+    const sourceDbName = sourceDbNameInput || inferDbName(sourceUri);
+    const destinationDbName = destinationDbNameInput || inferDbName(destinationUri);
+
+    if (!sourceDbName) {
+      return res.status(400).json({ msg: 'Source database name is required when the source URI does not include one.' });
+    }
+
+    if (!destinationDbName) {
+      return res.status(400).json({ msg: 'Destination database name is required when the destination URI does not include one.' });
+    }
+
+    if (sourceUri === destinationUri && sourceDbName === destinationDbName) {
+      return res.status(400).json({ msg: 'Source and destination point to the same database.' });
+    }
+
+    const result = await cloneDatabaseBetweenUris({
+      sourceUri,
+      sourceDbName,
+      destinationUri,
+      destinationDbName,
+      selectedCollections,
+    });
+
+    res.json({
+      msg: 'Database clone completed successfully.',
+      ...result,
+    });
+  } catch (err) {
+    console.error('Database clone error:', err);
+    res.status(500).json({ msg: err.message || 'Failed to clone database.' });
+  }
+};
+
+// @desc    Export source database data as JSON payload
+exports.exportDatabaseData = async (req, res) => {
+  try {
+    const sourceUri = String(req.body?.sourceUri || '').trim();
+    const sourceDbNameInput = String(req.body?.sourceDbName || '').trim();
+    const collectionsInput = req.body?.collections;
+
+    const selectedCollections = Array.isArray(collectionsInput)
+      ? collectionsInput.map((name) => String(name || '').trim()).filter(Boolean)
+      : [];
+
+    if (!sourceUri) {
+      return res.status(400).json({ msg: 'Source MongoDB URI is required.' });
+    }
+
+    const sourceDbName = sourceDbNameInput || inferDbName(sourceUri);
+
+    if (!sourceDbName) {
+      return res.status(400).json({ msg: 'Source database name is required when the source URI does not include one.' });
+    }
+
+    const result = await exportDatabaseData({
+      sourceUri,
+      sourceDbName,
+      selectedCollections,
+    });
+
+    res.json({
+      msg: 'Data export prepared successfully.',
+      ...result,
+    });
+  } catch (err) {
+    console.error('Database export error:', err);
+    res.status(500).json({ msg: err.message || 'Failed to export database data.' });
+  }
+};
+
+// @desc    List databases and their collections for a source MongoDB URI
+exports.getDatabaseOverview = async (req, res) => {
+  try {
+    const sourceUri = String(req.body?.sourceUri || '').trim();
+
+    if (!sourceUri) {
+      return res.status(400).json({ msg: 'Source MongoDB URI is required.' });
+    }
+
+    const overview = await listDatabaseOverview(sourceUri);
+    res.json(overview);
+  } catch (err) {
+    console.error('Database overview error:', err);
+    res.status(500).json({ msg: err.message || 'Failed to load database overview.' });
+  }
+};
+
+// @desc    Preview documents from a collection
+exports.getDatabaseCollectionPreview = async (req, res) => {
+  try {
+    const sourceUri = String(req.body?.sourceUri || '').trim();
+    const databaseName = String(req.body?.databaseName || '').trim();
+    const collectionName = String(req.body?.collectionName || '').trim();
+    const limit = Number(req.body?.limit || 10);
+
+    if (!sourceUri) {
+      return res.status(400).json({ msg: 'Source MongoDB URI is required.' });
+    }
+
+    const preview = await getCollectionPreview(sourceUri, databaseName, collectionName, limit);
+    res.json(preview);
+  } catch (err) {
+    console.error('Collection preview error:', err);
+    res.status(500).json({ msg: err.message || 'Failed to load collection preview.' });
   }
 };
