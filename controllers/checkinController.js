@@ -53,7 +53,10 @@ exports.upsertEmployee = async (req, res) => {
 
 exports.getEmployees = async (req, res) => {
   try {
-    const employees = await Employee.find().sort({ updatedAt: -1, createdAt: -1 });
+    const employees = await Employee.find()
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .allowDiskUse(true)
+      .lean();
     res.json(employees);
   } catch (err) {
     console.error("Employee list error:", err);

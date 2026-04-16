@@ -17,6 +17,8 @@ const employeeSchema = new mongoose.Schema({
   },
 });
 
+employeeSchema.index({ updatedAt: -1, createdAt: -1 });
+
 employeeSchema.pre("save", function preSave(next) {
   this.updatedAt = new Date();
   next();
