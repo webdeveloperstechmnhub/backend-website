@@ -1,6 +1,33 @@
 const User = require("../models/User");
 const Employee = require("../models/Employee");
 const generateQR = require("../utils/generateQR");
+const sendEmail = require("../utils/sendEmail");
+
+const buildTerminationLetterHtml = ({ employeeName, empId, terminationDate, reason }) => {
+  const dateText = new Date(terminationDate).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  return `
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827;max-width:680px;margin:0 auto;">
+      <h2 style="margin-bottom:8px;color:#b91c1c;">Employment Termination Notice</h2>
+      <p>Dear ${employeeName || "Employee"},</p>
+      <p>
+        This email serves as formal notice that your employment with TechMNHub has been terminated
+        effective from <strong>${dateText}</strong>.
+      </p>
+      <p><strong>Employee ID:</strong> ${empId}</p>
+      <p><strong>Reason:</strong> ${reason}</p>
+      <p>
+        If you have questions about final settlement, company property handover, or documentation,
+        please contact the admin team.
+      </p>
+      <p>Regards,<br/>TechMNHub Admin Team</p>
+    </div>
+  `;
+};
 
 const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
   const empId = String(source.empId || fallbackEmpId || "").trim();
@@ -84,7 +111,7 @@ exports.getEmployees = async (req, res) => {
         .sort({ updatedAt: sortOrder, createdAt: sortOrder })
         .skip(skip)
         .limit(limit)
-        .select("empId name photoUrl mobile email joiningDate designation department description updatedAt createdAt")
+        .select("empId name employmentStatus photoUrl mobile email joiningDate designation department description terminationDate terminationReason terminationLetterSentAt updatedAt createdAt")
         .allowDiskUse(true)
         .lean(),
       Employee.countDocuments(filter),
@@ -198,6 +225,77 @@ exports.deleteEmployee = async (req, res) => {
   }
 };
 
+exports.terminateEmployee = async (req, res) => {
+  try {
+    const empId = String(req.params.empId || "").trim();
+    const reason = String(req.body.reason || "").trim();
+
+    if (!empId) {
+      return res.status(400).json({ msg: "empId required" });
+    }
+
+    if (!reason) {
+      return res.status(400).json({ msg: "Termination reason is required" });
+    }
+
+    const employee = await Employee.findOne({ empId });
+
+    if (!employee) {
+      return res.status(404).json({ msg: "Employee not found" });
+    }
+
+    if (employee.employmentStatus === "terminated") {
+      return res.status(400).json({ msg: "Employee is already terminated", employee });
+    }
+
+    employee.employmentStatus = "terminated";
+    employee.terminationDate = new Date();
+    employee.terminationReason = reason;
+    employee.updatedAt = new Date();
+    await employee.save();
+
+    let emailStatus = "skipped";
+    let emailError = "";
+
+    if (employee.email) {
+      try {
+        await sendEmail({
+          to: employee.email,
+          subject: `Employment Termination Notice - ${employee.empId}`,
+          html: buildTerminationLetterHtml({
+            employeeName: employee.name,
+            empId: employee.empId,
+            terminationDate: employee.terminationDate,
+            reason,
+          }),
+        });
+
+        employee.terminationLetterSentAt = new Date();
+        employee.updatedAt = new Date();
+        await employee.save();
+        emailStatus = "sent";
+      } catch (err) {
+        console.error("Termination email error:", err);
+        emailStatus = "failed";
+        emailError = err.message || "Email send failed";
+      }
+    }
+
+    res.json({
+      msg:
+        emailStatus === "sent"
+          ? "Employee terminated and termination letter sent"
+          : "Employee terminated",
+      employee,
+      emailStatus,
+      emailError,
+    });
+  } catch (err) {
+    console.error("Employee terminate error:", err);
+    res.status(500).json({ msg: err.message });
+  }
+};
+
 // Verify employee by empId
 exports.verifyEmployee = async (req, res) => {
   try {
@@ -214,7 +312,8 @@ exports.verifyEmployee = async (req, res) => {
       return res.status(404).json({ msg: "Employee not found" });
     }
 
-    res.json({ msg: "Employee verified", employee, verified: true });
+    const isTerminated = employee.employmentStatus === "terminated";
+    res.json({ msg: "Employee verified", employee, verified: true, terminated: isTerminated });
   } catch (err) {
     console.error("Employee verify error:", err);
     res.status(500).json({ msg: err.message });

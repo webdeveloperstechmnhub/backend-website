@@ -18,6 +18,7 @@ const {
   upsertEmployee,
   updateEmployee,
   deleteEmployee,
+  terminateEmployee,
 } = require('../controllers/checkinController');
 const authMiddleware = require('../middleware/authMiddleware');
 
@@ -38,6 +39,7 @@ router.get('/employees', authMiddleware, getEmployees);
 router.get('/employees/:empId', authMiddleware, getEmployee);
 router.post('/employees', authMiddleware, upsertEmployee);
 router.put('/employees/:empId', authMiddleware, updateEmployee);
+router.put('/employees/:empId/terminate', authMiddleware, terminateEmployee);
 router.delete('/employees/:empId', authMiddleware, deleteEmployee);
 
 module.exports = router;

@@ -1,8 +1,14 @@
 const { MongoClient } = require('mongodb');
 
-const OLD_URI = 'mongodb+srv://techmnhub1team_db_user:M4Zbc8lrsyTdOzh5@cluster0.cpqnhqd.mongodb.net/?appName=Cluster0';
-const NEW_URI = 'mongodb+srv://webdevs:WTTS%402026@cluster0.woktzgp.mongodb.net/?appName=Cluster0';
-const DB_NAME = 'test';
+require('dotenv').config();
+
+const OLD_URI = process.env.SOURCE_MONGO_URI;
+const NEW_URI = process.env.DESTINATION_MONGO_URI;
+const DB_NAME = process.env.USERS_DB_NAME || 'test';
+
+if (!OLD_URI || !NEW_URI) {
+  throw new Error('Missing SOURCE_MONGO_URI or DESTINATION_MONGO_URI in environment.');
+}
 
 async function main() {
   const oldClient = new MongoClient(OLD_URI);
