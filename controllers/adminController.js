@@ -1,7 +1,19 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const AccountUser = require('../models/AccountUser');
+const Institute = require('../models/Institute');
 const { cloneDatabaseBetweenUris, exportDatabaseData, inferDbName } = require('../utils/databaseCloner');
 const { listDatabaseOverview, getCollectionPreview } = require('../utils/databaseInspector');
+
+const INSTITUTE_TYPES = new Set(['School', 'College', 'Coaching', 'Academy']);
+
+const generateStrongPassword = (length = 12) => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%&*';
+  return Array.from({ length })
+    .map(() => chars[Math.floor(Math.random() * chars.length)])
+    .join('');
+};
 
 // @desc    Admin Login
 exports.login = async (req, res) => {
@@ -248,5 +260,120 @@ exports.getDatabaseCollectionPreview = async (req, res) => {
   } catch (err) {
     console.error('Collection preview error:', err);
     res.status(500).json({ msg: err.message || 'Failed to load collection preview.' });
+  }
+};
+
+// @desc    Admin creates institute account manually
+exports.createInstituteAccount = async (req, res) => {
+  try {
+    const instituteName = String(req.body?.instituteName || '').trim();
+    const type = String(req.body?.type || '').trim();
+    const address = String(req.body?.address || '').trim();
+    const city = String(req.body?.city || '').trim();
+    const contactPerson = String(req.body?.contactPerson || '').trim();
+    const phone = String(req.body?.phone || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const autoGeneratePassword = Boolean(req.body?.autoGeneratePassword);
+    const manualPassword = String(req.body?.password || '').trim();
+
+    if (!instituteName || !address || !city || !contactPerson || !phone || !email || !type) {
+      return res.status(400).json({ msg: 'Please fill all required institute and login fields.' });
+    }
+
+    if (!INSTITUTE_TYPES.has(type)) {
+      return res.status(400).json({ msg: 'Invalid institute type provided.' });
+    }
+
+    const finalPassword = autoGeneratePassword ? generateStrongPassword(12) : manualPassword;
+
+    if (!finalPassword || finalPassword.length < 8) {
+      return res.status(400).json({ msg: 'Password must be at least 8 characters long.' });
+    }
+
+    const existingAccount = await AccountUser.findOne({ email });
+    if (existingAccount) {
+      return res.status(409).json({ msg: 'An account with this email already exists.' });
+    }
+
+    const passwordHash = await bcrypt.hash(finalPassword, 12);
+
+    const accountUser = await AccountUser.create({
+      email,
+      passwordHash,
+      role: 'institute',
+      verified: true,
+      createdByAdminEmail: req.admin?.email || '',
+    });
+
+    const institute = await Institute.create({
+      user_id: accountUser._id,
+      instituteName,
+      type,
+      address,
+      city,
+      contactPerson,
+      phone,
+      verified: true,
+    });
+
+    return res.status(201).json({
+      msg: 'Institute account created successfully.',
+      user: {
+        id: accountUser._id,
+        email: accountUser.email,
+        role: accountUser.role,
+        verified: accountUser.verified,
+      },
+      institute: {
+        id: institute._id,
+        instituteName: institute.instituteName,
+        type: institute.type,
+      },
+      credentials: {
+        email,
+        password: finalPassword,
+      },
+    });
+  } catch (err) {
+    console.error('Create institute account error:', err);
+    return res.status(500).json({ msg: 'Failed to create institute account.' });
+  }
+};
+
+// @desc    Admin gets all institute accounts
+exports.getInstitutes = async (req, res) => {
+  try {
+    const institutes = await Institute.find()
+      .sort({ createdAt: -1 })
+      .populate({
+        path: 'user_id',
+        select: 'email role verified createdAt',
+      });
+
+    const normalized = institutes.map((item) => ({
+      _id: item._id,
+      instituteName: item.instituteName,
+      type: item.type,
+      address: item.address,
+      city: item.city,
+      contactPerson: item.contactPerson,
+      phone: item.phone,
+      verified: item.verified,
+      createdAt: item.createdAt,
+      account: item.user_id
+        ? {
+            _id: item.user_id._id,
+            email: item.user_id.email,
+            role: item.user_id.role,
+            verified: item.user_id.verified,
+            createdAt: item.user_id.createdAt,
+          }
+        : null,
+    }));
+
+    return res.json(normalized);
+  } catch (err) {
+    console.error('Get institutes error:', err);
+    return res.status(500).json({ msg: 'Failed to load institutes.' });
   }
 };

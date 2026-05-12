@@ -238,36 +238,21 @@ exports.terminateEmployee = async (req, res) => {
       return res.status(400).json({ msg: "Termination reason is required" });
     }
 
-    const employee = await Employee.findOne({ empId }).lean();
+    const employee = await Employee.findOne({ empId });
 
     if (!employee) {
       return res.status(404).json({ msg: "Employee not found" });
     }
 
-    if (String(employee.employmentStatus || "").toLowerCase() === "terminated") {
+    if (employee.employmentStatus === "terminated") {
       return res.status(400).json({ msg: "Employee is already terminated", employee });
     }
 
-    const terminationDate = new Date();
-    let updatedEmployee = await Employee.findOneAndUpdate(
-      { empId },
-      {
-        $set: {
-          employmentStatus: "terminated",
-          terminationDate,
-          terminationReason: reason,
-          updatedAt: new Date(),
-        },
-      },
-      {
-        returnDocument: "after",
-        runValidators: false,
-      },
-    ).lean();
-
-    if (!updatedEmployee) {
-      return res.status(404).json({ msg: "Employee not found" });
-    }
+    employee.employmentStatus = "terminated";
+    employee.terminationDate = new Date();
+    employee.terminationReason = reason;
+    employee.updatedAt = new Date();
+    await employee.save();
 
     let emailStatus = "skipped";
     let emailError = "";
@@ -276,32 +261,18 @@ exports.terminateEmployee = async (req, res) => {
       try {
         await sendEmail({
           to: employee.email,
-          subject: `Employment Termination Notice - ${empId}`,
+          subject: `Employment Termination Notice - ${employee.empId}`,
           html: buildTerminationLetterHtml({
             employeeName: employee.name,
-            empId,
-            terminationDate,
+            empId: employee.empId,
+            terminationDate: employee.terminationDate,
             reason,
           }),
         });
 
-        const letterSentAt = new Date();
-        await Employee.updateOne(
-          { empId },
-          {
-            $set: {
-              terminationLetterSentAt: letterSentAt,
-              updatedAt: new Date(),
-            },
-          },
-          { runValidators: false },
-        );
-
-        updatedEmployee = {
-          ...updatedEmployee,
-          terminationLetterSentAt: letterSentAt,
-          updatedAt: new Date(),
-        };
+        employee.terminationLetterSentAt = new Date();
+        employee.updatedAt = new Date();
+        await employee.save();
         emailStatus = "sent";
       } catch (err) {
         console.error("Termination email error:", err);
@@ -315,7 +286,7 @@ exports.terminateEmployee = async (req, res) => {
         emailStatus === "sent"
           ? "Employee terminated and termination letter sent"
           : "Employee terminated",
-      employee: updatedEmployee,
+      employee,
       emailStatus,
       emailError,
     });

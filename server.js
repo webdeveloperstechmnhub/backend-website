@@ -12,6 +12,7 @@ const adminRoutes = require("./routes/adminRoutes"); // यदि तुमन�
 const offlineTicketRoutes = require("./routes/offlineTicketRoutes"); // Offline ticket generator
 const checkinRoutes = require("./routes/checkinRoutes"); // Check-in system
 const eventRoutes = require("./routes/eventRoutes");
+const accountRoutes = require("./routes/accountRoutes");
 
 const app = express();
 
@@ -37,8 +38,7 @@ app.use(
       "https://checkin-system-techmnhub.tpriyansh973.workers.dev",
       "https://ticket-generator.tpriyansh973.workers.dev",
       "https://techmnhub-1.pages.dev",
-      "https://techmnhub-frontend.pages.dev",
-      "https://admin-techmnhub.pages.dev"
+      "https://techmnhub-frontend.pages.dev"
     ],
     credentials: true,
   }),
@@ -74,6 +74,7 @@ app.use("/api/admin", adminRoutes); // admin route (यदि है तो)
 app.use("/api/ticket", offlineTicketRoutes); // Offline ticket generator
 app.use("/api/checkin", checkinRoutes); // Check-in system
 app.use("/api/events", eventRoutes); // Event management
+app.use("/api/account", accountRoutes); // Institute auth
 
 // 🟢 Server Start
 const PORT = process.env.PORT || 5000;

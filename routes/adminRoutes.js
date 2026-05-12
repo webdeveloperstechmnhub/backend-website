@@ -11,6 +11,8 @@ const {
   exportDatabaseData,
   getDatabaseOverview,
   getDatabaseCollectionPreview,
+  createInstituteAccount,
+  getInstitutes,
 } = require('../controllers/adminController');
 const {
   getEmployees,
@@ -35,6 +37,8 @@ router.post('/database-clone', authMiddleware, cloneDatabaseToCurrentDb);
 router.post('/database-export', authMiddleware, exportDatabaseData);
 router.post('/database-overview', authMiddleware, getDatabaseOverview);
 router.post('/database-collection-preview', authMiddleware, getDatabaseCollectionPreview);
+router.get('/institutes', authMiddleware, getInstitutes);
+router.post('/institutes', authMiddleware, createInstituteAccount);
 router.get('/employees', authMiddleware, getEmployees);
 router.get('/employees/:empId', authMiddleware, getEmployee);
 router.post('/employees', authMiddleware, upsertEmployee);
