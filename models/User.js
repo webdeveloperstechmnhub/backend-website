@@ -16,6 +16,9 @@ const userSchema = new mongoose.Schema({
   instagram: String,
 
   referralCode: String,
+  referralCodeApplied: { type: Boolean, default: false },
+  referralDiscountAmount: { type: Number, default: 0 },
+  originalAmountPaid: { type: Number, default: 0 },
 
   // Event mapping for admin event-wise entries
   eventId: String,
@@ -35,10 +38,18 @@ const userSchema = new mongoose.Schema({
 
   paymentStatus: {
     type: String,
-    enum: ["pending", "paid", "failed"],
+    enum: ["pending", "paid", "failed", "refunded"],
     default: "pending"
   },
-
+  registrationStatus: {
+    type: String,
+    enum: ["pending", "approved", "rejected", "waitlisted"],
+    default: "pending"
+  },
+  parentName: String,
+  school: String,
+  className: String,
+  age: Number,
   amountPaid: Number,
   passName: String,        // 👈 Pass name bhi save karo
   passType: {
@@ -49,6 +60,10 @@ const userSchema = new mongoose.Schema({
 
   checkedIn: { type: Boolean, default: false },
   checkInTime: Date,
+  attendanceMarkedBy: String,
+  approvedAt: Date,
+  rejectedAt: Date,
+  qrPlaceholder: String,
 
   createdAt: {
     type: Date,

@@ -2,6 +2,8 @@ const Event = require('../models/Event')
 const User = require('../models/User')
 const Institute = require('../models/Institute')
 const SessionBooking = require('../models/SessionBooking')
+const ContactMessage = require('../models/ContactMessage')
+const sendEmail = require('../utils/sendEmail')
 
 const normalizeEvent = (event) => ({
   id: String(event._id),
@@ -169,5 +171,88 @@ exports.getHomepageContent = async (req, res) => {
   } catch (error) {
     console.error('Homepage content error:', error)
     return res.status(500).json({ msg: 'Failed to load homepage content.' })
+  }
+}
+
+const normalizeText = (value) => String(value || '').trim()
+
+const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
+
+exports.sendContactMessage = async (req, res) => {
+  try {
+    const name = normalizeText(req.body?.name)
+    const phone = normalizeText(req.body?.phone)
+    const email = normalizeText(req.body?.email).toLowerCase()
+    const details = normalizeText(req.body?.details)
+    const source = normalizeText(req.body?.source) || 'website'
+
+    if (!name || !phone || !email || !details) {
+      return res.status(400).json({ msg: 'Please complete all fields.' })
+    }
+
+    if (!isEmail(email)) {
+      return res.status(400).json({ msg: 'Please enter a valid email address.' })
+    }
+
+    const receiver =
+      process.env.CONTACT_RECEIVER_EMAIL ||
+      process.env.ADMIN_EMAIL ||
+      process.env.EMAIL ||
+      'techmnhub.team@gmail.com'
+
+    const savedMessage = await ContactMessage.create({
+      name,
+      phone,
+      email,
+      details,
+      source: ['contact', 'join', 'website'].includes(source) ? source : 'website',
+      emailStatus: 'pending',
+    })
+
+    const subject = source === 'join' ? 'TechMNHub Join Request' : 'TechMNHub Contact Message'
+    const html = `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#111;max-width:680px">
+        <h2 style="margin:0 0 12px">${subject}</h2>
+        <p style="margin:0 0 8px"><strong>Name:</strong> ${name}</p>
+        <p style="margin:0 0 8px"><strong>Phone:</strong> ${phone}</p>
+        <p style="margin:0 0 8px"><strong>Email:</strong> ${email}</p>
+        <p style="margin:0 0 8px"><strong>Source:</strong> ${source}</p>
+        <p style="margin:14px 0 6px"><strong>Message:</strong></p>
+        <div style="white-space:pre-wrap;border:1px solid #ddd;border-radius:8px;padding:12px;background:#fafafa">${details}</div>
+      </div>
+    `
+
+    try {
+      const delivery = await sendEmail({
+        to: receiver,
+        subject,
+        html,
+      })
+
+      savedMessage.emailStatus = 'sent'
+      savedMessage.emailProvider = delivery?.provider || ''
+      savedMessage.emailError = ''
+      savedMessage.sentAt = new Date()
+      await savedMessage.save()
+
+      return res.json({
+        msg: 'Message sent successfully.',
+        emailStatus: 'sent',
+      })
+    } catch (emailError) {
+      console.error('Contact email delivery failed:', emailError)
+      savedMessage.emailStatus = 'failed'
+      savedMessage.emailProvider = ''
+      savedMessage.emailError = String(emailError?.message || 'Email send failed')
+      await savedMessage.save()
+
+      return res.status(202).json({
+        msg: 'Message saved, but email delivery failed. Admin can still view it in panel.',
+        emailStatus: 'failed',
+      })
+    }
+  } catch (error) {
+    console.error('Contact message error:', error)
+    return res.status(500).json({ msg: 'Failed to send message right now. Please try again.' })
   }
 }

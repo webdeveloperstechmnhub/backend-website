@@ -3,8 +3,9 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const AccountUser = require('../models/AccountUser');
 const Institute = require('../models/Institute');
-const { cloneDatabaseBetweenUris, exportDatabaseData, inferDbName } = require('../utils/databaseCloner');
-const { listDatabaseOverview, getCollectionPreview } = require('../utils/databaseInspector');
+const StudentSignup = require('../models/StudentSignup');
+const ContactMessage = require('../models/ContactMessage');
+const { cloneDatabaseBetweenUris, exportDatabaseData, inferDbName } = require('../utils/databaseCloner');const { listDatabaseOverview, getCollectionPreview } = require('../utils/databaseInspector');
 
 const INSTITUTE_TYPES = new Set(['School', 'College', 'Coaching', 'Academy']);
 
@@ -136,6 +137,117 @@ exports.getStats = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// @desc    Get student signup requests
+exports.getStudentSignups = async (req, res) => {
+  try {
+    const status = String(req.query?.status || '').trim().toLowerCase();
+    const search = String(req.query?.q || '').trim();
+
+    const query = {};
+
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+
+    if (search) {
+      const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [
+        { fullName: regex },
+        { email: regex },
+        { phone: regex },
+        { college: regex },
+        { year: regex },
+        { city: regex },
+        { interests: regex },
+      ];
+    }
+
+    const signups = await StudentSignup.find(query).sort({ createdAt: -1 });
+    res.json(signups);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// @desc    Update student signup status
+exports.reviewStudentSignup = async (req, res) => {
+  try {
+    const status = String(req.body?.status || '').trim().toLowerCase();
+    const decisionNote = String(req.body?.decisionNote || '').trim();
+
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ msg: 'Invalid student signup status.' });
+    }
+
+    const signup = await StudentSignup.findById(req.params.id);
+    if (!signup) {
+      return res.status(404).json({ msg: 'Student signup not found.' });
+    }
+
+    signup.status = status;
+    signup.reviewedAt = new Date();
+    signup.reviewedBy = req.admin?.email || 'admin';
+    signup.decisionNote = decisionNote;
+
+    if (status === 'approved') {
+      signup.approvedAt = new Date();
+      signup.rejectedAt = undefined;
+    } else if (status === 'rejected') {
+      signup.rejectedAt = new Date();
+      signup.approvedAt = undefined;
+    } else {
+      signup.approvedAt = undefined;
+      signup.rejectedAt = undefined;
+    }
+
+    await signup.save();
+
+    res.json({
+      msg: `Student signup ${status}.`,
+      signup,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// @desc    Get contact/join messages
+exports.getContactMessages = async (req, res) => {
+  try {
+    const status = String(req.query?.status || '').trim().toLowerCase();
+    const source = String(req.query?.source || '').trim().toLowerCase();
+    const search = String(req.query?.q || '').trim();
+
+    const query = {};
+
+    if (status && status !== 'all') {
+      query.emailStatus = status;
+    }
+
+    if (source && source !== 'all') {
+      query.source = source;
+    }
+
+    if (search) {
+      const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [
+        { name: regex },
+        { email: regex },
+        { phone: regex },
+        { details: regex },
+      ];
+    }
+
+    const messages = await ContactMessage.find(query).sort({ createdAt: -1 }).limit(300);
+    return res.json(messages);
+  } catch (err) {
+    console.error('Get contact messages error:', err);
+    return res.status(500).json({ msg: 'Failed to load contact messages.' });
   }
 };
 

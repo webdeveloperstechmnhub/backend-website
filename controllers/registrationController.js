@@ -159,6 +159,48 @@ const getSoldTicketCount = async (eventScope, passScope, excludeUserId = null) =
   return result[0]?.total || 0;
 };
 
+const calculateReferralDiscount = async ({ targetEvent, email, referralCode, baseAmount }) => {
+  const code = String(referralCode || '').trim().toUpperCase();
+  if (!targetEvent || !code) {
+    return { code: '', discountAmount: 0, finalAmount: baseAmount, referral: null };
+  }
+
+  const referral = (targetEvent.referralCodes || []).find(
+    (item) => item.active !== false && String(item.code || '').toUpperCase() === code,
+  );
+
+  if (!referral) {
+    throw new Error('Invalid referral code.');
+  }
+
+  if (referral.maxUses > 0 && referral.usedCount >= referral.maxUses) {
+    throw new Error('Referral code usage limit reached.');
+  }
+
+  const alreadyUsed = await User.findOne({
+    email,
+    eventId: String(targetEvent._id),
+    referralCode: code,
+    referralCodeApplied: true,
+  });
+
+  if (alreadyUsed) {
+    throw new Error('This referral code has already been used by this user.');
+  }
+
+  const rawDiscount = referral.discountType === 'percent'
+    ? Math.round((baseAmount * referral.discountValue) / 100)
+    : referral.discountValue;
+  const discountAmount = Math.min(Math.max(Number(rawDiscount) || 0, 0), baseAmount);
+
+  return {
+    code,
+    discountAmount,
+    finalAmount: Math.max(baseAmount - discountAmount, 0),
+    referral,
+  };
+};
+
 exports.registerUser = async (req, res) => {
   try {
     const { 
@@ -191,14 +233,22 @@ exports.registerUser = async (req, res) => {
       return res.status(404).json({ msg: 'Event not found' });
     }
 
-    if (targetEvent?.status === 'closed') {
-      return res.status(403).json({ msg: 'Registration for this event is closed' });
+    if (
+      targetEvent?.comingSoon
+      || targetEvent?.registrationSettings?.enabled === false
+      || ['draft', 'closed', 'archived'].includes(targetEvent?.status)
+    ) {
+      return res.status(403).json({
+        msg: targetEvent?.comingSoon
+          ? 'Registration for this event is coming soon.'
+          : 'Registration for this event is closed',
+      });
     }
 
-    const numericAmountPaid = Number(amountPaid);
+    const incomingAmountPaid = Number(amountPaid);
 
     // 👇 Validate amountPaid
-    if (!numericAmountPaid || numericAmountPaid <= 0) {
+    if (!Number.isFinite(incomingAmountPaid) || incomingAmountPaid < 0) {
       return res.status(400).json({ msg: 'Valid amountPaid is required' });
     }
 
@@ -212,20 +262,43 @@ exports.registerUser = async (req, res) => {
     const fallbackTicketType = normalizedTicketTypes[0] || {
       key: slugifyTicketKey(incomingPassType || passName || 'pro-participation'),
       name: passName || 'Pro Participation',
-      price: numericAmountPaid,
+      price: incomingAmountPaid,
       total: 0,
       appliesTo: rest.category === 'Visitor' ? 'Visitor' : 'Participation',
     };
 
     const resolvedTicketType = selectedTicketType || fallbackTicketType;
     const ticketQuantity = getTicketQuantity(resolvedTicketType, rest.category, subCategory, teamMembers);
+    const originalAmountPaid = resolvedTicketType.price * ticketQuantity;
+    let payableAmount = originalAmountPaid;
+    let referralDiscountAmount = 0;
+    let normalizedReferralCode = '';
+    let matchedReferral = null;
 
     if (targetEvent) {
-      const expectedAmount = resolvedTicketType.price * ticketQuantity;
+      let referralResult;
+      try {
+        referralResult = await calculateReferralDiscount({
+          targetEvent,
+          email,
+          referralCode,
+          baseAmount: originalAmountPaid,
+        });
+      } catch (referralError) {
+        return res.status(400).json({ msg: referralError.message });
+      }
 
-      if (resolvedTicketType.price > 0 && numericAmountPaid !== expectedAmount) {
+      payableAmount = referralResult.finalAmount;
+      referralDiscountAmount = referralResult.discountAmount;
+      normalizedReferralCode = referralResult.code;
+      matchedReferral = referralResult.referral;
+
+      if (resolvedTicketType.price > 0 && incomingAmountPaid !== payableAmount) {
         return res.status(400).json({
-          msg: `Invalid ticket price. Expected Rs ${expectedAmount} for selected ticket quantity.`,
+          msg: `Invalid ticket price. Expected Rs ${payableAmount} after referral discount.`,
+          expectedAmount: payableAmount,
+          originalAmount: originalAmountPaid,
+          referralDiscountAmount,
         });
       }
 
@@ -249,7 +322,9 @@ exports.registerUser = async (req, res) => {
       
       // Update existing user
       Object.assign(user, rest, { 
-        amountPaid: numericAmountPaid,
+        amountPaid: payableAmount,
+        originalAmountPaid,
+        referralDiscountAmount,
         subCategory: subCategory || [],
         teamMembers: teamMembers || [],
         passName: resolvedTicketType.name,
@@ -257,10 +332,17 @@ exports.registerUser = async (req, res) => {
         ticketQuantity,
         eventId: eventId || user.eventId || null,
         eventShortName: eventShortName || user.eventShortName || 'Zonex 2026',
-        referralCode, 
+        referralCode: normalizedReferralCode,
+        referralCodeApplied: Boolean(normalizedReferralCode),
       });
       
       await user.save();
+      if (matchedReferral && normalizedReferralCode) {
+        await Event.updateOne(
+          { _id: targetEvent._id, 'referralCodes.code': normalizedReferralCode },
+          { $inc: { 'referralCodes.$.usedCount': 1 } },
+        );
+      }
       return res.status(200).json(user);
     }
 
@@ -273,7 +355,9 @@ exports.registerUser = async (req, res) => {
     user = new User({
       ...rest,
       email,
-      amountPaid: numericAmountPaid,
+      amountPaid: payableAmount,
+      originalAmountPaid,
+      referralDiscountAmount,
       subCategory: subCategory || [],
       teamMembers: teamMembers || [],
       teamLeader,
@@ -283,11 +367,18 @@ exports.registerUser = async (req, res) => {
       eventId: eventId || null,
       eventShortName: eventShortName || 'Zonex 2026',
       registrationId,
-      paymentStatus: 'pending',
-      referralCode, 
+      paymentStatus: payableAmount === 0 ? 'paid' : 'pending',
+      referralCode: normalizedReferralCode,
+      referralCodeApplied: Boolean(normalizedReferralCode),
     });
 
     await user.save();
+    if (matchedReferral && normalizedReferralCode) {
+      await Event.updateOne(
+        { _id: targetEvent._id, 'referralCodes.code': normalizedReferralCode },
+        { $inc: { 'referralCodes.$.usedCount': 1 } },
+      );
+    }
     res.status(201).json(user);
 
   } catch (err) {

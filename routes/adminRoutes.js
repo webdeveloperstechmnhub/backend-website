@@ -7,6 +7,8 @@ const {
   deleteUser,
   checkInUser,
   getStats,
+  getStudentSignups,
+  reviewStudentSignup,
   cloneDatabaseToCurrentDb,
   exportDatabaseData,
   getDatabaseOverview,
@@ -33,6 +35,8 @@ router.get('/users/:id', authMiddleware, getUser);
 router.delete('/users/:id', authMiddleware, deleteUser);
 router.put('/users/:id/checkin', authMiddleware, checkInUser);
 router.get('/stats', authMiddleware, getStats);
+router.get('/student-signups', authMiddleware, getStudentSignups);
+router.patch('/student-signups/:id', authMiddleware, reviewStudentSignup);
 router.post('/database-clone', authMiddleware, cloneDatabaseToCurrentDb);
 router.post('/database-export', authMiddleware, exportDatabaseData);
 router.post('/database-overview', authMiddleware, getDatabaseOverview);

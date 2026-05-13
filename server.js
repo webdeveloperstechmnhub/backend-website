@@ -14,6 +14,8 @@ const checkinRoutes = require("./routes/checkinRoutes"); // Check-in system
 const eventRoutes = require("./routes/eventRoutes");
 const accountRoutes = require("./routes/accountRoutes");
 const siteRoutes = require("./routes/siteRoutes");
+const studentSignupRoutes = require("./routes/studentSignupRoutes");
+const sessionRoutes = require("./routes/sessionRoutes");
 
 const app = express();
 
@@ -78,6 +80,8 @@ app.use("/api/checkin", checkinRoutes); // Check-in system
 app.use("/api/events", eventRoutes); // Event management
 app.use("/api/account", accountRoutes); // Institute auth
 app.use("/api/site", siteRoutes); // Homepage and site content
+app.use("/api/sessions", sessionRoutes); // Session booking management
+app.use("/api", studentSignupRoutes); // Student signup flow
 
 // 🟢 Server Start
 const PORT = process.env.PORT || 5000;
