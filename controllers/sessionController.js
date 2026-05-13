@@ -1,4 +1,5 @@
 const SessionBooking = require('../models/SessionBooking')
+const sendEmail = require('../utils/sendEmail')
 
 const buildSessionPayload = (body) => ({
   instituteName: String(body?.instituteName || '').trim(),
@@ -47,6 +48,50 @@ exports.createSessionBooking = async (req, res) => {
     const booking = await SessionBooking.create({
       ...payload,
       status: 'pending',
+    })
+
+    // Send email notification to admin
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@techmnhub.com'
+    const adminSubject = `New Session Booking: ${payload.topic} by ${payload.contactName}`
+    const adminHtml = `
+      <h2>New Session Booking Request</h2>
+      <p><strong>Event/Topic:</strong> ${payload.topic}</p>
+      <p><strong>Sender:</strong> ${payload.contactName} (${payload.email})</p>
+      <p><strong>Institute:</strong> ${payload.instituteName}</p>
+      <p><strong>Department:</strong> ${payload.department}</p>
+      <p><strong>City:</strong> ${payload.city}</p>
+      <p><strong>Phone:</strong> ${payload.phone}</p>
+      <p><strong>Session Type:</strong> ${payload.type}</p>
+      <p><strong>Date & Time:</strong> ${payload.date} at ${payload.time}</p>
+      <p><strong>Duration:</strong> ${payload.duration}</p>
+      <p><strong>Students:</strong> ${payload.students}</p>
+      <p><strong>Audience:</strong> ${payload.audience}</p>
+      <p><strong>Mode:</strong> ${payload.mode}</p>
+      <p><strong>Requirements:</strong> ${payload.requirements || 'None'}</p>
+      <p><strong>Preferred Contact Time:</strong> ${payload.preferredContactTime || 'Not specified'}</p>
+      <br>
+      <p>Please review and respond to this booking request in the admin panel.</p>
+    `
+    sendEmail({
+      to: adminEmail,
+      subject: adminSubject,
+      html: adminHtml
+    })
+
+    // Send confirmation email to user
+    const userSubject = 'Session Booking Received'
+    const userHtml = `
+      <h2>Thank you for your session booking request!</h2>
+      <p>We have received your request for:</p>
+      <p><strong>Topic:</strong> ${payload.topic}</p>
+      <p><strong>Date/Time:</strong> ${payload.date} ${payload.time}</p>
+      <p><strong>Mode:</strong> ${payload.mode}</p>
+      <p>Our team will review and contact you soon.</p>
+    `
+    sendEmail({
+      to: payload.email,
+      subject: userSubject,
+      html: userHtml
     })
 
     return res.status(201).json({

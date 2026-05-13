@@ -5,6 +5,7 @@ const AccountUser = require('../models/AccountUser');
 const Institute = require('../models/Institute');
 const StudentSignup = require('../models/StudentSignup');
 const ContactMessage = require('../models/ContactMessage');
+const sendEmail = require('../utils/sendEmail');
 const { cloneDatabaseBetweenUris, exportDatabaseData, inferDbName } = require('../utils/databaseCloner');const { listDatabaseOverview, getCollectionPreview } = require('../utils/databaseInspector');
 
 const INSTITUTE_TYPES = new Set(['School', 'College', 'Coaching', 'Academy']);
@@ -196,6 +197,20 @@ exports.reviewStudentSignup = async (req, res) => {
     if (status === 'approved') {
       signup.approvedAt = new Date();
       signup.rejectedAt = undefined;
+
+      // Send approval email
+      const subject = 'Your TechMNHub Student Signup Approved'
+      const html = `
+        <h2>Congratulations!</h2>
+        <p>Your student signup has been approved.</p>
+        <p>You can now log in to your student dashboard.</p>
+        <p>Welcome to TechMNHub!</p>
+      `
+      sendEmail({
+        to: signup.email,
+        subject: subject,
+        html: html
+      })
     } else if (status === 'rejected') {
       signup.rejectedAt = new Date();
       signup.approvedAt = undefined;
