@@ -40,6 +40,36 @@ const referralCodeSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const eventFormFieldSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true, trim: true },
+    label: { type: String, default: "" },
+    placeholder: { type: String, default: "" },
+    type: {
+      type: String,
+      enum: ["text", "email", "number", "textarea", "select", "checkbox", "radio", "date", "url", "file"],
+      default: "text",
+    },
+    required: { type: Boolean, default: false },
+    enabled: { type: Boolean, default: true },
+    options: { type: [String], default: [] },
+    defaultValue: { type: mongoose.Schema.Types.Mixed, default: "" },
+  },
+  { _id: false },
+);
+
+const DEFAULT_EVENT_FORM_FIELDS = [
+  { id: "fullName", label: "Full Name", placeholder: "Enter your full name", type: "text", required: true, enabled: true, options: [], defaultValue: "" },
+  { id: "mobile", label: "Mobile Number", placeholder: "Enter your mobile number", type: "text", required: true, enabled: true, options: [], defaultValue: "" },
+  { id: "email", label: "Email Address", placeholder: "Enter your email address", type: "email", required: true, enabled: true, options: [], defaultValue: "" },
+  { id: "college", label: "College/School", placeholder: "Enter your college or school", type: "text", required: true, enabled: true, options: [], defaultValue: "" },
+  { id: "courseYear", label: "Course & Year", placeholder: "Enter your course and year", type: "text", required: true, enabled: true, options: [], defaultValue: "" },
+  { id: "city", label: "City", placeholder: "Enter your city", type: "text", required: true, enabled: true, options: [], defaultValue: "" },
+  { id: "portfolio", label: "Portfolio URL", placeholder: "Enter portfolio URL", type: "url", required: false, enabled: true, options: [], defaultValue: "" },
+  { id: "github", label: "GitHub URL", placeholder: "Enter GitHub URL", type: "url", required: false, enabled: true, options: [], defaultValue: "" },
+  { id: "instagram", label: "Instagram URL", placeholder: "Enter Instagram URL", type: "url", required: false, enabled: true, options: [], defaultValue: "" },
+];
+
 const eventSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -91,6 +121,20 @@ const eventSchema = new mongoose.Schema(
     highlights: stringArray,
     categories: stringArray,
     tags: stringArray,
+    eventType: {
+      type: String,
+      enum: ["competition", "workshop", "summer_camp", "webinar"],
+      default: "competition",
+      index: true,
+    },
+    summerCampConfig: {
+      heroMessage: { type: String, default: "" },
+      keyHighlights: stringArray,
+      campDates: { type: String, default: "" },
+      mentorHighlights: stringArray,
+      programFocus: { type: String, default: "" },
+      callToActionText: { type: String, default: "Enroll Now" },
+    },
 
     eligibility: {
       minClass: { type: String, default: "" },
@@ -167,6 +211,7 @@ const eventSchema = new mongoose.Schema(
       },
     },
     ticketTypes: { type: [eventPassSchema], default: [] },
+    formFields: { type: [eventFormFieldSchema], default: () => DEFAULT_EVENT_FORM_FIELDS.map((field) => ({ ...field })) },
 
     status: {
       type: String,

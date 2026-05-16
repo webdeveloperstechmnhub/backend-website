@@ -36,11 +36,11 @@ exports.getHomepageContent = async (req, res) => {
       User.countDocuments({ checkedIn: true }),
       Institute.countDocuments(),
       Event.countDocuments(),
-      Event.countDocuments({ status: 'active' }),
+      Event.countDocuments({ status: { $in: ['active', 'published'] } }),
       SessionBooking.countDocuments(),
       SessionBooking.countDocuments({ status: 'pending' }),
       SessionBooking.countDocuments({ status: 'confirmed' }),
-      Event.find({ status: 'active' }).sort({ createdAt: -1 }).limit(6),
+      Event.find({ status: { $in: ['active', 'published'] } }).sort({ createdAt: -1 }).limit(6),
     ])
 
     return res.json({

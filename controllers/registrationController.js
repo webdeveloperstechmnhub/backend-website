@@ -203,17 +203,26 @@ const calculateReferralDiscount = async ({ targetEvent, email, referralCode, bas
 
 exports.registerUser = async (req, res) => {
   try {
-    const { 
-      email, 
+    const {
+      email,
       passType: incomingPassType,
-      amountPaid, 
+      amountPaid,
       subCategory,
       teamMembers,
       passName,
       eventId,
       eventShortName,
-      referralCode, 
-      ...rest 
+      referralCode,
+      fullName,
+      mobile,
+      college,
+      courseYear,
+      city,
+      category,
+      portfolio,
+      github,
+      instagram,
+      ...customFields
     } = req.body;
 
     // Stop new registrations if the target event is closed.
@@ -264,11 +273,11 @@ exports.registerUser = async (req, res) => {
       name: passName || 'Pro Participation',
       price: incomingAmountPaid,
       total: 0,
-      appliesTo: rest.category === 'Visitor' ? 'Visitor' : 'Participation',
+      appliesTo: category === 'Visitor' ? 'Visitor' : 'Participation',
     };
 
     const resolvedTicketType = selectedTicketType || fallbackTicketType;
-    const ticketQuantity = getTicketQuantity(resolvedTicketType, rest.category, subCategory, teamMembers);
+    const ticketQuantity = getTicketQuantity(resolvedTicketType, category, subCategory, teamMembers);
     const originalAmountPaid = resolvedTicketType.price * ticketQuantity;
     let payableAmount = originalAmountPaid;
     let referralDiscountAmount = 0;
@@ -294,12 +303,19 @@ exports.registerUser = async (req, res) => {
       matchedReferral = referralResult.referral;
 
       if (resolvedTicketType.price > 0 && incomingAmountPaid !== payableAmount) {
-        return res.status(400).json({
-          msg: `Invalid ticket price. Expected Rs ${payableAmount} after referral discount.`,
-          expectedAmount: payableAmount,
-          originalAmount: originalAmountPaid,
-          referralDiscountAmount,
-        });
+        // Allow a registration to proceed when referral discount reduces payable to 0.
+        // Some clients may still POST the original amount; treat payable=0 as authoritative
+        // and proceed while logging a warning instead of rejecting the request.
+        if (payableAmount === 0) {
+          console.info(`PRICE MISMATCH (tolerated): event=${targetEvent?._id || 'unknown'} email=${email || 'unknown'} incoming=${incomingAmountPaid} payable=${payableAmount} referral=${normalizedReferralCode || 'none'}`);
+        } else {
+          return res.status(400).json({
+            msg: `Invalid ticket price. Expected Rs ${payableAmount} after referral discount.`,
+            expectedAmount: payableAmount,
+            originalAmount: originalAmountPaid,
+            referralDiscountAmount,
+          });
+        }
       }
 
       if (resolvedTicketType.total > 0) {
@@ -321,7 +337,18 @@ exports.registerUser = async (req, res) => {
       }
       
       // Update existing user
-      Object.assign(user, rest, { 
+      Object.assign(user, {
+        fullName,
+        mobile,
+        college,
+        courseYear,
+        city,
+        category,
+        portfolio,
+        github,
+        instagram,
+        customFields,
+      }, {
         amountPaid: payableAmount,
         originalAmountPaid,
         referralDiscountAmount,
@@ -346,14 +373,25 @@ exports.registerUser = async (req, res) => {
       return res.status(200).json(user);
     }
 
-    // Generate registration ID
-    const registrationId = `ZNX-${Date.now()}`;
+    // Generate registration ID (use SUMMER- prefix for summer camp registrations)
+    const isSummerEvent = (targetEvent && (targetEvent.eventType === 'summer_camp' || String(targetEvent.shortName || '').toLowerCase().includes('summer'))) ||
+      String(eventShortName || '').toLowerCase().includes('summer');
+    const registrationId = isSummerEvent ? `SUMMER-${Date.now()}` : `ZNX-${Date.now()}`;
     
     // Team leader set karo (first team member)
-    const teamLeader = teamMembers && teamMembers.length > 0 ? teamMembers[0] : rest.fullName;
+    const teamLeader = teamMembers && teamMembers.length > 0 ? teamMembers[0] : fullName;
 
     user = new User({
-      ...rest,
+      fullName,
+      mobile,
+      college,
+      courseYear,
+      city,
+      category,
+      portfolio,
+      github,
+      instagram,
+      customFields,
       email,
       amountPaid: payableAmount,
       originalAmountPaid,
@@ -384,5 +422,57 @@ exports.registerUser = async (req, res) => {
   } catch (err) {
     console.error('REGISTER ERROR:', err);
     res.status(500).json({ msg: err.message });
+  }
+};
+exports.validateReferralCode = async (req, res) => {
+  try {
+    const { eventId, eventShortName, referralCode, amount, email } = req.body;
+    const code = String(referralCode || '').trim();
+    const baseAmount = Number(amount);
+
+    if (!code) {
+      return res.status(400).json({ msg: 'Referral code is required.' });
+    }
+
+    if (!Number.isFinite(baseAmount) || baseAmount < 0) {
+      return res.status(400).json({ msg: 'A valid amount is required to calculate referral discount.' });
+    }
+
+    let targetEvent = null;
+    if (eventId) {
+      targetEvent = await Event.findById(eventId);
+    } else if (eventShortName) {
+      targetEvent = await Event.findOne({
+        shortName: { $regex: new RegExp(`^${escapeRegex(String(eventShortName).trim())}$`, 'i') },
+      });
+    }
+
+    if (!targetEvent) {
+      return res.status(404).json({ msg: 'Event not found.' });
+    }
+
+    const referralResult = await calculateReferralDiscount({
+      targetEvent,
+      email: String(email || '').trim(),
+      referralCode: code,
+      baseAmount,
+    });
+
+    return res.json({
+      code: referralResult.code,
+      discountAmount: referralResult.discountAmount,
+      finalAmount: referralResult.finalAmount,
+      referral: referralResult.referral ? {
+        code: referralResult.referral.code,
+        discountType: referralResult.referral.discountType,
+        discountValue: referralResult.referral.discountValue,
+      } : null,
+    });
+  } catch (err) {
+    console.error('REFERRAL VALIDATION ERROR:', err);
+    const status = /invalid referral code|usage limit reached|already been used/i.test(err.message)
+      ? 400
+      : 500;
+    return res.status(status).json({ msg: err.message });
   }
 };

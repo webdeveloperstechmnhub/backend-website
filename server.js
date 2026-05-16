@@ -15,6 +15,7 @@ const eventRoutes = require("./routes/eventRoutes");
 const accountRoutes = require("./routes/accountRoutes");
 const siteRoutes = require("./routes/siteRoutes");
 const studentSignupRoutes = require("./routes/studentSignupRoutes");
+const { ensureSeedEventsIfEmpty } = require("./controllers/eventController");
 const sessionRoutes = require("./routes/sessionRoutes");
 
 const app = express();
@@ -38,8 +39,8 @@ app.use(
       "https://techmnhub-admin.vercel.app",
       "https://techmnhub.com",
       "https://www.techmnhub.com",
-      "https://checkin-system-techmnhub.tpriyansh973.workers.dev",
-      "https://ticket-generator.tpriyansh973.workers.dev",
+      "https://checkin-system.pages.dev",
+      "https://tickets-generator.pages.dev",
       "https://techmnhub-1.pages.dev",
       "https://techmnhub-frontend.pages.dev",
       "https://admin-techmnhub.pages.dev"
@@ -65,7 +66,15 @@ app.use("/api/payment/create-order", paymentCreateLimiter); // सिर्फ c
 // 🔁 MongoDB Connection
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
+  .then(async () => {
+    console.log("✅ MongoDB Connected");
+    try {
+      await ensureSeedEventsIfEmpty();
+      console.log("✅ Seed events verified");
+    } catch (err) {
+      console.error("❌ Seed event verification failed:", err);
+    }
+  })
   .catch((err) => {
     console.error("❌ MongoDB Connection Error:", err);
     process.exit(1);

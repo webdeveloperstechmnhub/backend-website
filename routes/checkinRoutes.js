@@ -21,4 +21,8 @@ router.post("/checkin", checkInParticipant);
 // Get stats
 router.get("/stats", getCheckinStats);
 
+// Attendance endpoints
+router.post('/attendance', require('../controllers/checkinController').createAttendance);
+router.get('/attendance', require('../controllers/checkinController').getAttendance);
+
 module.exports = router;

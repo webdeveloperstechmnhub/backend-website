@@ -78,6 +78,114 @@ const LEGACY_EVENT_DATA = {
   publishedAt: new Date(),
 };
 
+const SUMMER_CAMP_EVENT_DATA = {
+  name: "TechMNHub Future Skills Summer Camp 2026",
+  title: "TechMNHub Future Skills Summer Camp 2026",
+  shortName: "Future Skills Summer Camp 2026",
+  slug: "future-skills-summer-camp-2026",
+  subtitle: "Future-ready learning for students in Class 6th-12th",
+  date: "1 June, 2026",
+  day: "Saturday",
+  time: "09:00 AM - 02:00 PM",
+  timings: "09:00 AM - 02:00 PM",
+  location: "TechMNHub Campus, Delhi NCR",
+  venue: "TechMNHub Campus",
+  city: "Delhi NCR",
+  organizer: "TechMNHub",
+  expectedParticipants: "200+",
+  skillZones: "5+",
+  prizes: "Certificates & Rewards",
+  description:
+    "A premium summer camp for school students to learn AI, coding, public speaking and future-ready skills through live projects and mentor-led sessions.",
+  shortDescription: "A premium summer camp for future-ready students.",
+  fullDescription:
+    "The TechMNHub Future Skills Summer Camp 2026 brings together young learners for hands-on AI, coding, communication and creativity workshops guided by expert mentors.",
+  category: "Summer Camp",
+  eventType: "summer_camp",
+  highlights: ["Live AI & coding labs", "Team challenges", "Confidence-building sessions", "Certificate on completion"],
+  categories: ["Summer Camp", "AI", "Coding", "Public Speaking", "Creativity"],
+  tags: ["Summer Camp", "AI", "Creative Learning", "Future Skills"],
+  registrationDeadline: "25 May, 2026",
+  refundPolicy: "Full refund available until camp start date.",
+  registrationLink: "/summer-camp-registration",
+  referralCodes: [
+    {
+      code: "TMH2026",
+      discountType: "flat",
+      discountValue: 100,
+      maxUses: 50,
+      usedCount: 0,
+      active: true,
+    },
+  ],
+  contact: {
+    email: "support@techmnhub.com",
+    phone: "+91 98765 43210",
+  },
+  entryFee: {
+    pro: "Rs 399",
+    visitor: "Rs 399",
+  },
+  ticketInventory: {
+    pro: { price: 399, total: 100 },
+    visitor: { price: 399, total: 0 },
+  },
+  ticketTypes: [
+    {
+      key: "basic-pass",
+      name: "Basic Pass",
+      price: 399,
+      total: 100,
+      remainingSeats: 100,
+      appliesTo: "All",
+      features: ["Camp access", "Mentor-led sessions"],
+      description: "Core camp access with guided sessions.",
+    },
+    {
+      key: "smart-pass",
+      name: "Smart Pass",
+      price: 599,
+      total: 60,
+      remainingSeats: 60,
+      appliesTo: "All",
+      features: ["Camp access", "Certificate", "Extra coaching"],
+      description: "Includes extra project coaching and activities.",
+    },
+    {
+      key: "premium-pass",
+      name: "Premium Pass",
+      price: 999,
+      total: 30,
+      remainingSeats: 30,
+      appliesTo: "All",
+      features: ["Premium mentor clinics", "Rewards kit"],
+      description: "Full premium experience with mentor clinics.",
+    },
+  ],
+  registrationSettings: { enabled: true, deadline: new Date("2026-05-25"), maxRegistrations: 190, waitingList: true, autoConfirmation: true },
+  displayOptions: {
+    mediaTile: true,
+    statsTile: true,
+    eligibilityTile: true,
+    highlightsTile: true,
+    scheduleTile: true,
+    passesTile: true,
+    rewardsTile: true,
+    seoTile: true,
+    contactTile: true,
+    registrationTile: true,
+  },
+  eligibility: { minClass: "6th", maxClass: "12th", boardsAccepted: ["CBSE", "ICSE", "State Boards"], ageGroup: "10-18" },
+  certificates: ["Participation Certificate"],
+  awards: ["Best Learner Award"],
+  gifts: ["Camp Kit"],
+  rewardPrizes: ["Premium goodies"],
+  seo: { metaTitle: "TechMNHub Future Skills Summer Camp 2026", metaDescription: "Join the premium Summer Camp for AI, coding, public speaking, and future-ready skills.", keywords: ["summer camp", "future skills", "AI camp", "coding bootcamp"], openGraphImage: "" },
+  featured: true,
+  status: "active",
+  publishedAt: new Date(),
+};
+
 const toTrimmedString = (value, fallback = "") => {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
@@ -189,6 +297,57 @@ const normalizeDisplayOptions = (value = {}, existingOptions = {}) => {
   }, {});
 };
 
+const normalizeFormFields = (value, existingFields = []) => {
+  const source = Array.isArray(value) ? value : existingFields || [];
+  const seen = new Set();
+
+  const normalized = (source.length > 0 ? source : []).map((field) => {
+    if (!field || typeof field !== "object") return null;
+    const id = String(field.id || field.name || "").trim();
+    if (!id) return null;
+    const normalizedId = id.replace(/\s+/g, "").toLowerCase();
+    if (!normalizedId || seen.has(normalizedId)) return null;
+    seen.add(normalizedId);
+
+    const type = ["text", "email", "number", "textarea", "select", "checkbox", "radio", "date", "url", "file"].includes(field.type)
+      ? field.type
+      : "text";
+
+    const options = Array.isArray(field.options)
+      ? field.options.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+
+    const defaultValue = field.defaultValue !== undefined
+      ? field.defaultValue
+      : type === "checkbox"
+        ? []
+        : "";
+
+    return {
+      id: normalizedId,
+      label: String(field.label || field.id || field.name || normalizedId).trim(),
+      placeholder: String(field.placeholder || "").trim(),
+      type,
+      required: Boolean(field.required),
+      enabled: field.enabled !== false,
+      options,
+      defaultValue,
+    };
+  }).filter(Boolean);
+
+  if (normalized.length > 0) return normalized;
+  return (existingFields || []).map((field) => ({
+    id: String(field.id || "").trim(),
+    label: String(field.label || field.id || "").trim(),
+    placeholder: String(field.placeholder || "").trim(),
+    type: field.type || "text",
+    required: Boolean(field.required),
+    enabled: field.enabled !== false,
+    options: Array.isArray(field.options) ? field.options : [],
+    defaultValue: field.defaultValue !== undefined ? field.defaultValue : (field.type === "checkbox" ? [] : ""),
+  })).filter((field) => field.id);
+};
+
 const normalizeEventPayload = (body, existingEvent = null, adminEmail = "") => {
   const title = toTrimmedString(body.title || body.name, existingEvent?.title || existingEvent?.name || "");
   const shortName = toTrimmedString(body.shortName || title, existingEvent?.shortName || title);
@@ -238,6 +397,17 @@ const normalizeEventPayload = (body, existingEvent = null, adminEmail = "") => {
     skillZones: toTrimmedString(body.skillZones, existingEvent?.skillZones || ""),
     prizes: toTrimmedString(body.prizes, existingEvent?.prizes || ""),
     category: EVENT_CATEGORIES.has(body.category) ? body.category : existingEvent?.category || "",
+    eventType: ["competition", "workshop", "summer_camp", "webinar"].includes(body.eventType)
+      ? body.eventType
+      : existingEvent?.eventType || "competition",
+    summerCampConfig: {
+      heroMessage: toTrimmedString(body.summerCampConfig?.heroMessage, existingEvent?.summerCampConfig?.heroMessage || ""),
+      keyHighlights: normalizeStringArray(body.summerCampConfig?.keyHighlights ?? existingEvent?.summerCampConfig?.keyHighlights),
+      campDates: toTrimmedString(body.summerCampConfig?.campDates, existingEvent?.summerCampConfig?.campDates || ""),
+      mentorHighlights: normalizeStringArray(body.summerCampConfig?.mentorHighlights ?? existingEvent?.summerCampConfig?.mentorHighlights),
+      programFocus: toTrimmedString(body.summerCampConfig?.programFocus, existingEvent?.summerCampConfig?.programFocus || ""),
+      callToActionText: toTrimmedString(body.summerCampConfig?.callToActionText, existingEvent?.summerCampConfig?.callToActionText || "Enroll Now"),
+    },
     highlights: normalizeStringArray(body.highlights ?? existingEvent?.highlights),
     categories: normalizeStringArray(body.categories ?? existingEvent?.categories),
     tags: normalizeStringArray(body.tags ?? existingEvent?.tags),
@@ -290,6 +460,7 @@ const normalizeEventPayload = (body, existingEvent = null, adminEmail = "") => {
       visitor: { price: secondPass.price || firstPass.price || 0, total: secondPass.total || firstPass.total || 0 },
     },
     ticketTypes: passes,
+    ...(body.formFields !== undefined ? { formFields: normalizeFormFields(body.formFields, existingEvent?.formFields) } : {}),
     status: ["draft", "published", "active", "closed", "archived"].includes(body.status) ? body.status : existingEvent?.status || "draft",
     featured: Boolean(body.featured ?? existingEvent?.featured),
     updatedByAdminEmail: adminEmail,
@@ -357,9 +528,21 @@ const ensureLegacyEventIfEmpty = async () => {
   if (!legacyExists) await Event.create(LEGACY_EVENT_DATA);
 };
 
+const ensureSummerCampEventIfEmpty = async () => {
+  const summerCampExists = await Event.findOne({ shortName: { $regex: /^future skills summer camp 2026$/i } });
+  if (!summerCampExists) await Event.create(SUMMER_CAMP_EVENT_DATA);
+};
+
+const ensureSeedEventsIfEmpty = async () => {
+  await ensureLegacyEventIfEmpty();
+  await ensureSummerCampEventIfEmpty();
+};
+
+exports.ensureSeedEventsIfEmpty = ensureSeedEventsIfEmpty;
+
 exports.getActiveEvents = async (_req, res) => {
   try {
-    await ensureLegacyEventIfEmpty();
+    await ensureSeedEventsIfEmpty();
     const events = await Event.find({ status: { $in: ["published", "active"] } }).sort({ featured: -1, startDate: 1, createdAt: -1 });
     res.json(events);
   } catch (err) {
@@ -370,7 +553,7 @@ exports.getActiveEvents = async (_req, res) => {
 
 exports.getPublicEvents = async (_req, res) => {
   try {
-    await ensureLegacyEventIfEmpty();
+    await ensureSeedEventsIfEmpty();
     const events = await Event.find({ status: { $ne: "draft" } }).sort({ featured: -1, createdAt: -1 });
     res.json(events);
   } catch (err) {
@@ -381,7 +564,7 @@ exports.getPublicEvents = async (_req, res) => {
 
 exports.getAllEvents = async (req, res) => {
   try {
-    await ensureLegacyEventIfEmpty();
+    await ensureSeedEventsIfEmpty();
     const page = Math.max(Number(req.query.page || 1), 1);
     const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
     const filters = {};

@@ -33,6 +33,7 @@ const userSchema = new mongoose.Schema({
 
   orderId: String,
   paymentId: String,
+  customFields: { type: mongoose.Schema.Types.Mixed, default: {} },
 
   paymentMode: String,     // Cash, UPI, Card, Complimentary, etc.
 

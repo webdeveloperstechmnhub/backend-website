@@ -2,6 +2,7 @@ const User = require("../models/User");
 const Employee = require("../models/Employee");
 const generateQR = require("../utils/generateQR");
 const sendEmail = require("../utils/sendEmail");
+const Attendance = require("../models/Attendance");
 
 const buildTerminationLetterHtml = ({ employeeName, empId, terminationDate, reason }) => {
   const dateText = new Date(terminationDate).toLocaleDateString("en-IN", {
@@ -376,12 +377,80 @@ exports.checkInParticipant = async (req, res) => {
     user.checkInTime = new Date();
     await user.save();
 
+    // Record an attendance entry for this check-in (keeps historical records)
+    try {
+      await Attendance.create({
+        userId: user._id,
+        eventId: user.eventId || req.body.eventId || '',
+        registrationId: user.registrationId,
+        markedBy: req.body.markedBy || req.admin?.email || 'scanner',
+        session: req.body.session || ''
+      });
+    } catch (attErr) {
+      console.warn('Failed to write attendance record:', attErr.message || attErr);
+    }
+
     console.log(`✅ Check-in: ${user.fullName} (${user.registrationId})`);
 
     res.json({ msg: "Check-in successful", user, checkedInAt: user.checkInTime });
 
   } catch (err) {
     console.error("Check-in error:", err);
+    res.status(500).json({ msg: err.message });
+  }
+};
+
+// Create a standalone attendance record (no change to user checkedIn flag)
+exports.createAttendance = async (req, res) => {
+  try {
+    const { userId, registrationId, eventId, session, markedBy } = req.body;
+
+    if (!userId && !registrationId) {
+      return res.status(400).json({ msg: 'userId or registrationId required' });
+    }
+
+    let user = null;
+    if (userId) user = await User.findById(userId);
+    if (!user && registrationId) user = await User.findOne({ registrationId });
+
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+
+    const att = await Attendance.create({
+      userId: user._id,
+      eventId: eventId || user.eventId || '',
+      registrationId: user.registrationId,
+      markedBy: markedBy || req.admin?.email || 'scanner',
+      session: session || ''
+    });
+
+    res.json({ msg: 'Attendance recorded', attendance: att });
+  } catch (err) {
+    console.error('Attendance create error:', err);
+    res.status(500).json({ msg: err.message });
+  }
+};
+
+// List attendance records (filter by eventId, userId, registrationId, date range)
+exports.getAttendance = async (req, res) => {
+  try {
+    const { eventId, userId, registrationId, since, until, limit } = req.query;
+    const filter = {};
+    if (eventId) filter.eventId = eventId;
+    if (userId) filter.userId = userId;
+    if (registrationId) filter.registrationId = registrationId;
+
+    if (since || until) {
+      filter.createdAt = {};
+      if (since) filter.createdAt.$gte = new Date(since);
+      if (until) filter.createdAt.$lte = new Date(until);
+    }
+
+    const lim = Math.min(500, Math.max(1, parseInt(limit || '50', 10)));
+
+    const items = await Attendance.find(filter).sort({ createdAt: -1 }).limit(lim).lean();
+    res.json(items);
+  } catch (err) {
+    console.error('Get attendance error:', err);
     res.status(500).json({ msg: err.message });
   }
 };
