@@ -2,6 +2,8 @@ const User = require("../models/User");
 const Event = require("../models/Event");
 const generateQR = require("../utils/generateQR");
 const sendEmail = require("../utils/sendEmail");
+const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
+const { generateTicketPDF } = require("../utils/generateTicketPDF");
 
 // Generate unique registration ID with event-specific prefix
 function generateRegistrationId(eventShortName) {
@@ -138,9 +140,11 @@ exports.sendOfflineTicketEmail = async (req, res) => {
     // Load event for branding
     let eventName = "TechMNHub Event";
     let eventDetails = "Check the official website for event details.";
+    let eventObj = null;
     if (user.eventId) {
       const event = await Event.findById(user.eventId);
       if (event) {
+        eventObj = event;
         eventName = event.name || eventName;
         const eventDate = event.date ? new Date(event.date).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
         const eventCity = event.city || "";
@@ -180,7 +184,7 @@ exports.sendOfflineTicketEmail = async (req, res) => {
           <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
           
           <div style="margin: 20px 0;">
-            <img src="${user.qrCode}" alt="QR Code" style="width: 200px; height: 200px; border-radius: 10px; border: 2px solid #06b6d4;" />
+            <img src="cid:ticket-qr" alt="QR Code" style="width: 200px; height: 200px; border-radius: 10px; border: 2px solid #06b6d4;" />
             <p style="font-size: 12px; color: #999; margin-top: 10px;">Scan this at venue entrance</p>
           </div>
         </div>
@@ -199,21 +203,41 @@ exports.sendOfflineTicketEmail = async (req, res) => {
 
         <hr style="border: none; border-top: 1px solid #ddd;" />
         <p style="font-size: 14px; color: #555;">
-          Please save this email. Show the QR code or Registration ID at the registration desk on the day of the event.<br />
+          Please save this email. Show the QR code at the registration desk on the day of the event.<br />
           For any queries, reply to this email.
         </p>
         <p style="font-size: 14px; color: #999;">– Team TechMNHub</p>
       </div>
     `;
 
+    // Prepare QR code and PDF ticket attachments
+    let emailAttachments = [];
+    if (user.qrCode) {
+      const qrAttachment = buildQrEmailAttachment(user.qrCode, `${user.registrationId}-qr.png`);
+      if (qrAttachment) {
+        emailAttachments.push(qrAttachment);
+      }
+    }
+
+    // Add PDF ticket attachment
+    try {
+      const pdfTicket = await generateTicketPDF(user, eventObj || { name: eventName, date: new Date() }, user.registrationId);
+      if (pdfTicket) {
+        emailAttachments.push(pdfTicket);
+      }
+    } catch (pdfErr) {
+      console.error("⚠️ PDF ticket generation failed, continuing with email:", pdfErr.message);
+    }
+
     // Send email
     await sendEmail({
       to: user.email,
       subject: `✅ ${eventName} – Your Ticket (Offline Registration)`,
       html: emailHtml,
+      attachments: emailAttachments,
     });
 
-    console.log(`📧 Offline ticket email sent to ${user.email}`);
+    console.log(`📧 Offline ticket email sent to ${user.email} with ${emailAttachments.length} attachments`);
 
     res.json({
       msg: "Email sent successfully",

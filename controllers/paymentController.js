@@ -3,6 +3,8 @@ const crypto = require("crypto");
 const User = require("../models/User");
 const generateQR = require("../utils/generateQR");
 const sendEmail = require("../utils/sendEmail");
+const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
+const { generateTicketPDF } = require("../utils/generateTicketPDF");
 
 const buildSummerEmail = (user) => {
   const subject = '🚀 Welcome To TechMNHub Future Skills Summer Camp 2026';
@@ -289,10 +291,10 @@ exports.verifyPayment = async (req, res) => {
       subject = built.subject;
       emailHtml = built.emailHtml;
     } else {
-      subject = '✅ Zonex 2026 – Your Ticket';
+      subject = '✅ TechMNHub – Your Ticket';
       emailHtml = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 30px; background: #f9f9f9;">
-          <h1 style="color: #06b6d4; text-align: center;">🎟️ Zonex 2026 – Registration Confirmed</h1>
+          <h1 style="color: #06b6d4; text-align: center;">🎟️ TechMNHub – Registration Confirmed</h1>
           <p style="font-size: 18px;">Hello <strong>${user.fullName}</strong>,</p>
           <p>Thank you for registering! Your payment was successful.</p>
 
@@ -300,7 +302,9 @@ exports.verifyPayment = async (req, res) => {
             <p><strong>Registration ID:</strong></p>
             <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
 
-            <p><strong>Event:</strong> Zonex 2026 | 7 March 2026 | Muzaffarnagar</p>
+            ${user.qrCode ? `<div style="text-align: center; margin: 20px 0;"><img src="cid:ticket-qr" alt="QR Code" style="width: 200px; height: 200px; border-radius: 10px; border: 2px solid #06b6d4;" /><p style="font-size: 12px; color: #999; margin-top: 8px;">Scan at venue</p></div>` : ''}
+
+            <p><strong>Event:</strong> TechMNHub | 7 March 2026 | Muzaffarnagar</p>
             <p><strong>Category:</strong> ${user.category}</p>
             <p><strong>Activities Selected:</strong><br> ${activitiesList}</p>
 
@@ -312,7 +316,7 @@ exports.verifyPayment = async (req, res) => {
 
           <hr style="border: none; border-top: 1px solid #ddd;" />
           <p style="font-size: 14px; color: #555;">
-            Please save this email. Show the registration ID at the registration desk on the day of the event.<br />
+            Please save this email. Show the QR code at the registration desk on the day of the event.<br />
             For any queries, reply to this email.
           </p>
           <p style="font-size: 14px; color: #999;">– Team TechMNHub</p>
@@ -320,15 +324,36 @@ exports.verifyPayment = async (req, res) => {
       `;
     }
 
-    // Send email
+    // Send email with QR code and PDF ticket attachments
     try {
       if (user.email) {
+        let emailAttachments = [];
+        
+        // Add QR code attachment
+        if (user.qrCode) {
+          const qrAttachment = buildQrEmailAttachment(user.qrCode, `${user.registrationId}-qr.png`);
+          if (qrAttachment) {
+            emailAttachments.push(qrAttachment);
+          }
+        }
+
+        // Add PDF ticket attachment
+        try {
+          const pdfTicket = await generateTicketPDF(user, { name: user.eventShortName || 'TechMNHub Event', date: user.eventDate, city: user.city }, user.registrationId);
+          if (pdfTicket) {
+            emailAttachments.push(pdfTicket);
+          }
+        } catch (pdfErr) {
+          console.error("⚠️ PDF ticket generation failed, continuing with email:", pdfErr.message);
+        }
+
         await sendEmail({
           to: user.email,
           subject,
           html: emailHtml,
+          attachments: emailAttachments,
         });
-        console.log(`📧 Ticket email sent to ${user.email}`);
+        console.log(`📧 Ticket email sent to ${user.email} with ${emailAttachments.length} attachments`);
       }
     } catch (emailErr) {
       console.error("❌ Email send failed:", emailErr);

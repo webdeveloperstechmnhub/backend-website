@@ -213,6 +213,7 @@ const eventSchema = new mongoose.Schema(
       },
     },
     ticketTypes: { type: [eventPassSchema], default: [] },
+    seatsLeft: { type: Number, default: null, min: 0 },
     formFields: { type: [eventFormFieldSchema], default: () => DEFAULT_EVENT_FORM_FIELDS.map((field) => ({ ...field })) },
 
     status: {

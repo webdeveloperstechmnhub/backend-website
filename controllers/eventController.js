@@ -544,7 +544,17 @@ exports.getActiveEvents = async (_req, res) => {
   try {
     await ensureSeedEventsIfEmpty();
     const events = await Event.find({ status: { $in: ["published", "active"] } }).sort({ featured: -1, startDate: 1, createdAt: -1 });
-    res.json(events);
+    
+    // Add registration counts and seatsAvailable to each event
+    const enrichedEvents = await Promise.all(events.map(async (event) => {
+      const eventObj = event.toObject();
+      const registrationsCount = await User.countDocuments(getEventEntriesQuery(event));
+      const seatLimit = event.registrationSettings?.maxRegistrations || event.ticketTypes?.reduce((sum, pass) => sum + (pass.total || 0), 0) || 0;
+      const seatsAvailable = seatLimit > 0 ? seatLimit : null;
+      return { ...eventObj, registrationsCount, seatsAvailable };
+    }));
+    
+    res.json(enrichedEvents);
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: "Server error" });
@@ -555,7 +565,17 @@ exports.getPublicEvents = async (_req, res) => {
   try {
     await ensureSeedEventsIfEmpty();
     const events = await Event.find({ status: { $ne: "draft" } }).sort({ featured: -1, createdAt: -1 });
-    res.json(events);
+    
+    // Add registration counts and seatsAvailable to each event
+    const enrichedEvents = await Promise.all(events.map(async (event) => {
+      const eventObj = event.toObject();
+      const registrationsCount = await User.countDocuments(getEventEntriesQuery(event));
+      const seatLimit = event.registrationSettings?.maxRegistrations || event.ticketTypes?.reduce((sum, pass) => sum + (pass.total || 0), 0) || 0;
+      const seatsAvailable = event.seatsLeft !== null && event.seatsLeft !== undefined ? event.seatsLeft : (seatLimit > 0 ? seatLimit : null);
+      return { ...eventObj, registrationsCount, seatsAvailable };
+    }));
+    
+    res.json(enrichedEvents);
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: "Server error" });
@@ -579,7 +599,17 @@ exports.getAllEvents = async (req, res) => {
       Event.find(filters).sort({ featured: -1, createdAt: -1 }).skip((page - 1) * limit).limit(limit),
       Event.countDocuments(filters),
     ]);
-    res.json({ items, pagination: { page, limit, total, totalPages: Math.max(Math.ceil(total / limit), 1) } });
+    
+    // Add registration counts and seatsAvailable to each event
+    const enrichedItems = await Promise.all(items.map(async (event) => {
+      const eventObj = event.toObject();
+      const registrationsCount = await User.countDocuments(getEventEntriesQuery(event));
+      const seatLimit = event.registrationSettings?.maxRegistrations || event.ticketTypes?.reduce((sum, pass) => sum + (pass.total || 0), 0) || 0;
+      const seatsAvailable = event.seatsLeft !== null && event.seatsLeft !== undefined ? event.seatsLeft : (seatLimit > 0 ? seatLimit : null);
+      return { ...eventObj, registrationsCount, seatsAvailable };
+    }));
+    
+    res.json({ items: enrichedItems, pagination: { page, limit, total, totalPages: Math.max(Math.ceil(total / limit), 1) } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: "Server error" });
@@ -592,7 +622,10 @@ exports.getEventById = async (req, res) => {
     const event = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ msg: "Event not found" });
     const analytics = await buildAnalytics(event);
-    res.json({ ...event.toObject(), analytics });
+    const registrationsCount = await User.countDocuments(getEventEntriesQuery(event));
+    const seatLimit = event.registrationSettings?.maxRegistrations || event.ticketTypes?.reduce((sum, pass) => sum + (pass.total || 0), 0) || 0;
+    const seatsAvailable = event.seatsLeft !== null && event.seatsLeft !== undefined ? event.seatsLeft : (seatLimit > 0 ? seatLimit : null);
+    res.json({ ...event.toObject(), analytics, registrationsCount, seatsAvailable });
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: "Server error" });
