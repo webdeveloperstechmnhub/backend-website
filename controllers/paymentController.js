@@ -87,11 +87,9 @@ const buildSummerEmail = (user) => {
                         </td>
 
                         <td style="vertical-align:top;width:38%;text-align:center;">
-                          <a href="${verificationUrl}" target="_blank" style="text-decoration:none;display:inline-block;">
-                            <div style="display:inline-block;padding:12px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.08));border:1px solid rgba(255,255,255,0.04);">
-                              <img src="${user.qrCode || ''}" alt="QR Code" width="140" height="140" style="display:block;border-radius:10px;border:6px solid rgba(212,175,55,0.08);" />
-                            </div>
-                          </a>
+                          <div style="display:inline-block;padding:12px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.08));border:1px solid rgba(255,255,255,0.04);">
+                            <img src="cid:ticketqr@techmnhub" alt="QR Code" width="140" height="140" style="display:block;border-radius:10px;border:6px solid rgba(212,175,55,0.08);background:#fff;" />
+                          </div>
                           <p style="margin:10px 0 0;font-size:12px;color:#cfcfcf;">Scan at entry</p>
                           <div style="margin-top:8px;padding:6px 10px;border-radius:999px;display:inline-block;background:${passColor};color:#0b0b0c;font-weight:800;font-size:12px;">${user.passName || user.passType || ''}</div>
                         </td>
@@ -285,6 +283,20 @@ exports.verifyPayment = async (req, res) => {
 
     let emailHtml = '';
     let subject = '';
+    let qrBuffer = null;  // PNG Buffer for CID inline attachment
+
+    // Generate QR as Buffer (works correctly as CID attachment in all clients)
+    try {
+      const QRCode = require('qrcode');
+      qrBuffer = await QRCode.toBuffer(user.registrationId, {
+        errorCorrectionLevel: 'H',
+        margin: 2,
+        width: 300,
+      });
+      console.log('🔲 Email QR buffer generated:', qrBuffer.length, 'bytes');
+    } catch (qrErr) {
+      console.error('⚠️ Email QR generation failed:', qrErr.message);
+    }
 
     if (isSummer) {
       const built = buildSummerEmail(user);
@@ -302,7 +314,18 @@ exports.verifyPayment = async (req, res) => {
             <p><strong>Registration ID:</strong></p>
             <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
 
-            ${user.qrCode ? `<div style="text-align: center; margin: 20px 0;"><img src="cid:ticket-qr" alt="QR Code" style="width: 200px; height: 200px; border-radius: 10px; border: 2px solid #06b6d4;" /><p style="font-size: 12px; color: #999; margin-top: 8px;">Scan at venue</p></div>` : ''}
+            ${qrBuffer ? `
+            <div style="text-align: center; margin: 24px 0; padding: 16px; background: #f0f9ff; border-radius: 12px; border: 2px dashed #06b6d4;">
+              <p style="font-size: 11px; color: #0891b2; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; font-weight: bold;">🔍 Scan to Check In</p>
+              <img
+                src="cid:ticketqr@techmnhub"
+                alt="QR Code"
+                width="180"
+                height="180"
+                style="display:block;margin:0 auto;border-radius:10px;border:3px solid #06b6d4;background:#fff;"
+              />
+              <p style="font-size: 11px; color: #999; margin-top: 10px;">Show this at the registration desk</p>
+            </div>` : ''}
 
             <p><strong>Event:</strong> TechMNHub | 7 March 2026 | Muzaffarnagar</p>
             <p><strong>Category:</strong> ${user.category}</p>
@@ -329,12 +352,23 @@ exports.verifyPayment = async (req, res) => {
       if (user.email) {
         let emailAttachments = [];
         
-        // Add QR code attachment
-        if (user.qrCode) {
-          const qrAttachment = buildQrEmailAttachment(user.qrCode, `${user.registrationId}-qr.png`);
-          if (qrAttachment) {
-            emailAttachments.push(qrAttachment);
-          }
+        // Attachments: QR inline CID + QR downloadable PNG + PDF ticket
+        if (qrBuffer) {
+          // 1. Inline — cid:ticketqr@techmnhub renders inside email body
+          emailAttachments.push({
+            filename: `${user.registrationId}-qr.png`,
+            content: qrBuffer,
+            contentType: 'image/png',
+            contentId: 'ticketqr@techmnhub',
+            contentDisposition: 'inline',
+          });
+          // 2. Downloadable PNG — separate file attachment
+          emailAttachments.push({
+            filename: `${user.registrationId}-qr.png`,
+            content: qrBuffer,
+            contentType: 'image/png',
+            contentDisposition: 'attachment',
+          });
         }
 
         // Add PDF ticket attachment

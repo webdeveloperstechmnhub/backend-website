@@ -4,6 +4,7 @@ const generateQR = require("../utils/generateQR");
 const sendEmail = require("../utils/sendEmail");
 const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
 const { generateTicketPDF } = require("../utils/generateTicketPDF");
+const { buildSummerEmail } = require("./paymentController");
 
 // Generate unique registration ID with event-specific prefix
 function generateRegistrationId(eventShortName) {
@@ -152,6 +153,11 @@ exports.sendOfflineTicketEmail = async (req, res) => {
       }
     }
 
+    // Build email — same template logic as the website frontend (paymentController)
+    const eventShortNameLower = String(user.eventShortName || eventName || '').toLowerCase();
+    const isSummer = eventShortNameLower.includes('summer') || eventShortNameLower.includes('future skills') ||
+      (eventObj && (eventObj.eventType === 'summer_camp' || String(eventObj.shortName || '').toLowerCase().includes('summer')));
+
     // Create activities list
     const activitiesList = user.subCategory && user.subCategory.length > 0
       ? user.subCategory.map(a => `• ${a}`).join('<br>')
@@ -159,64 +165,104 @@ exports.sendOfflineTicketEmail = async (req, res) => {
 
     // Create team members list
     let teamInfo = '';
-    if (user.teamMembers && user.teamMembers.length > 0) {
+    if (user.subCategory && user.subCategory.includes('Hackathon') && user.teamMembers && user.teamMembers.length > 0) {
       teamInfo = `
         <div style="background: #f0f0f0; padding: 15px; border-radius: 8px; margin: 15px 0;">
-          <p><strong>👥 Team Members:</strong></p>
+          <p><strong>👥 Team Members (Hackathon):</strong></p>
           ${user.teamMembers.map((member, idx) => `
             <p style="margin: 5px 0; padding-left: 15px;">
-              ${idx === 0 ? '👑 ' : '• '}${member}
+              ${idx === 0 ? '👑 Team Leader: ' : '• '}${member}
             </p>
           `).join('')}
         </div>
       `;
     }
 
-    // Email HTML with QR code
-    const emailHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 30px; background: #f9f9f9;">
-        <h1 style="color: #06b6d4; text-align: center;">🎟️ ${eventName} – Registration Confirmed</h1>
-        <p style="font-size: 18px;">Hello <strong>${user.fullName}</strong>,</p>
-        <p>Welcome to ${eventName}! Your offline registration has been confirmed.</p>
-        
-        <div style="background: #fff; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
-          <p><strong>Registration ID:</strong></p>
-          <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
-          
-          <div style="margin: 20px 0;">
-            <img src="cid:ticket-qr" alt="QR Code" style="width: 200px; height: 200px; border-radius: 10px; border: 2px solid #06b6d4;" />
-            <p style="font-size: 12px; color: #999; margin-top: 10px;">Scan this at venue entrance</p>
+    let emailHtml = '';
+    let subject = '';
+    let qrBuffer = null;  // PNG Buffer for CID inline attachment
+
+    // Generate QR as Buffer (toBuffer works correctly as CID attachment)
+    try {
+      const QRCode = require('qrcode');
+      qrBuffer = await QRCode.toBuffer(user.registrationId, {
+        errorCorrectionLevel: 'H',
+        margin: 2,
+        width: 300,
+      });
+      console.log('🔲 Email QR buffer generated:', qrBuffer.length, 'bytes');
+    } catch (qrErr) {
+      console.error('⚠️ Email QR generation failed:', qrErr.message);
+    }
+
+    if (isSummer) {
+      const built = buildSummerEmail(user);
+      subject = built.subject;
+      emailHtml = built.emailHtml;
+    } else {
+      subject = '✅ TechMNHub – Your Ticket';
+      emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 30px; background: #f9f9f9;">
+          <h1 style="color: #06b6d4; text-align: center;">🎟️ TechMNHub – Registration Confirmed</h1>
+          <p style="font-size: 18px;">Hello <strong>${user.fullName}</strong>,</p>
+          <p>Thank you for registering! Your payment was successful.</p>
+
+          <div style="background: #fff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p><strong>Registration ID:</strong></p>
+            <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
+
+            ${qrBuffer ? `
+            <div style="text-align: center; margin: 24px 0; padding: 16px; background: #f0f9ff; border-radius: 12px; border: 2px dashed #06b6d4;">
+              <p style="font-size: 11px; color: #0891b2; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; font-weight: bold;">🔍 Scan to Check In</p>
+              <img
+                src="cid:ticketqr@techmnhub"
+                alt="QR Code"
+                width="180"
+                height="180"
+                style="display:block;margin:0 auto;border-radius:10px;border:3px solid #06b6d4;background:#fff;"
+              />
+              <p style="font-size: 11px; color: #999; margin-top: 10px;">Show this at the registration desk</p>
+            </div>` : ''}
+            
+            <p><strong>Event:</strong> ${eventName} | ${eventDetails}</p>
+            <p><strong>Category:</strong> ${user.category || user.ticketDescription || 'Participant'}</p>
+            <p><strong>Activities Selected:</strong><br> ${activitiesList}</p>
+
+            ${teamInfo}
+
+            <p><strong>Pass:</strong> ${user.passName || 'Pro Participation'}</p>
+            <p><strong>Amount Paid:</strong> ₹${user.amountPaid}</p>
           </div>
+
+          <hr style="border: none; border-top: 1px solid #ddd;" />
+          <p style="font-size: 14px; color: #555;">
+            Please save this email. Show the QR code at the registration desk on the day of the event.<br />
+            For any queries, reply to this email.
+          </p>
+          <p style="font-size: 14px; color: #999;">– Team TechMNHub</p>
         </div>
+      `;
+    }
 
-        <div style="background: #fff; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Event:</strong> ${eventName} | ${eventDetails}</p>
-          <p><strong>Ticket Description:</strong> ${user.ticketDescription}</p>
-          <p><strong>Activities Selected:</strong><br> ${activitiesList}</p>
-          
-          ${teamInfo}
-          
-          <p><strong>Pass:</strong> ${user.passName || "Pro Participation"}</p>
-          <p><strong>Amount Paid:</strong> ₹${user.amountPaid}</p>
-          <p><strong>Payment Mode:</strong> ${user.paymentMode || "Offline"}</p>
-        </div>
-
-        <hr style="border: none; border-top: 1px solid #ddd;" />
-        <p style="font-size: 14px; color: #555;">
-          Please save this email. Show the QR code at the registration desk on the day of the event.<br />
-          For any queries, reply to this email.
-        </p>
-        <p style="font-size: 14px; color: #999;">– Team TechMNHub</p>
-      </div>
-    `;
-
-    // Prepare QR code and PDF ticket attachments
+    // Attachments: QR inline CID + QR downloadable PNG + PDF ticket
     let emailAttachments = [];
-    if (user.qrCode) {
-      const qrAttachment = buildQrEmailAttachment(user.qrCode, `${user.registrationId}-qr.png`);
-      if (qrAttachment) {
-        emailAttachments.push(qrAttachment);
-      }
+
+    if (qrBuffer) {
+      // 1. Inline — cid:ticketqr@techmnhub renders inside email body
+      emailAttachments.push({
+        filename: `${user.registrationId}-qr.png`,
+        content: qrBuffer,
+        contentType: 'image/png',
+        contentId: 'ticketqr@techmnhub',
+        contentDisposition: 'inline',
+      });
+      // 2. Downloadable PNG — separate file attachment
+      emailAttachments.push({
+        filename: `${user.registrationId}-qr.png`,
+        content: qrBuffer,
+        contentType: 'image/png',
+        contentDisposition: 'attachment',
+      });
     }
 
     // Add PDF ticket attachment
@@ -232,7 +278,7 @@ exports.sendOfflineTicketEmail = async (req, res) => {
     // Send email
     await sendEmail({
       to: user.email,
-      subject: `✅ ${eventName} – Your Ticket (Offline Registration)`,
+      subject,
       html: emailHtml,
       attachments: emailAttachments,
     });

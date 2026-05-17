@@ -24,6 +24,8 @@ const toSmtpAttachments = (attachments = []) => {
     content: file.content,
     contentType: file.contentType,
     cid: file.contentId,
+    // inline = embedded in body (CID ref), attachment = downloadable file
+    contentDisposition: file.contentDisposition || (file.contentId ? "inline" : "attachment"),
     encoding: typeof file.content === "string" ? "base64" : undefined,
   }));
 };
@@ -69,6 +71,19 @@ const getGmailTransporter = () => {
   });
 };
 
+const toResendAttachments = (attachments = []) =>
+  attachments.map((file) => {
+    const entry = {
+      filename: file.filename,
+      content: file.content,           // Buffer or base64 string
+      content_type: file.contentType,  // Resend uses content_type, not contentType
+    };
+    if (file.contentId) {
+      entry.content_id = file.contentId;  // Resend uses content_id for inline CID
+    }
+    return entry;
+  });
+
 const sendWithResend = async ({ to, subject, html, attachments }) => {
   if (!resend) {
     throw new Error("RESEND_API_KEY missing");
@@ -79,7 +94,7 @@ const sendWithResend = async ({ to, subject, html, attachments }) => {
     to,
     subject,
     html,
-    attachments: attachments.length > 0 ? attachments : undefined,
+    attachments: attachments.length > 0 ? toResendAttachments(attachments) : undefined,
   };
 
   const { data, error } = await resend.emails.send(payload);
