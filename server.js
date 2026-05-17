@@ -32,7 +32,8 @@ app.use(
       "http://localhost:5174",
       "http://localhost:3000",
       "http://localhost:8080",
-      "http://localhost:5175",      // For ticket generator
+      "http://localhost:5175",
+      "http://localhost:5176",      // For ticket generator
       "http://127.0.0.1:8080",      // For ticket generator
       "null",                        // For file:// protocol
       "https://techmnhub-gamma.vercel.app",

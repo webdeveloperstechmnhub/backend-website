@@ -23,7 +23,7 @@ exports.generateOfflineTicket = async (req, res) => {
       city,
       college,
       courseYear,
-      category,
+      ticketDescription,
       subCategory,
       teamMembers,
       passName,
@@ -38,7 +38,7 @@ exports.generateOfflineTicket = async (req, res) => {
     } = req.body;
 
     // Validation
-    if (!fullName || !mobile || !email || !category || !passName) {
+    if (!fullName || !mobile || !email || !ticketDescription || !passName) {
       return res.status(400).json({ msg: "Please fill all required fields" });
     }
 
@@ -89,7 +89,7 @@ exports.generateOfflineTicket = async (req, res) => {
       city,
       college,
       courseYear,
-      category,
+      ticketDescription,
       subCategory,
       teamMembers: teamMembers || [],
       passName,
@@ -187,7 +187,7 @@ exports.sendOfflineTicketEmail = async (req, res) => {
 
         <div style="background: #fff; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <p><strong>Event:</strong> ${eventName} | ${eventDetails}</p>
-          <p><strong>Category:</strong> ${user.category}</p>
+          <p><strong>Ticket Description:</strong> ${user.ticketDescription}</p>
           <p><strong>Activities Selected:</strong><br> ${activitiesList}</p>
           
           ${teamInfo}

@@ -180,9 +180,11 @@ const eventSchema = new mongoose.Schema(
       contactTile: { type: Boolean, default: true },
       registrationTile: { type: Boolean, default: true },
     },
+    themeColor: { type: String, default: "#D4AF37", match: /^#(?:[0-9a-fA-F]{3}){1,2}$/ },
     registrationDeadline: { type: String, default: "" },
     registrationLink: { type: String, default: "" },
     refundPolicy: { type: String, default: "" },
+    seatsAvailable: { type: Number, default: 0, min: 0 },
 
     contact: {
       email: { type: String, default: "" },

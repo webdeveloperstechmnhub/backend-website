@@ -8,7 +8,7 @@ const userSchema = new mongoose.Schema({
   courseYear: String,
   city: String,
 
-  category: String,
+  ticketDescription: String,  // Custom description for the ticket
   subCategory: [String],  // 👈 Array banaya
 
   portfolio: String,
