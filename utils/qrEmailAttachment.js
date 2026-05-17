@@ -1,4 +1,4 @@
-const buildQrEmailAttachment = (qrDataUrl, filename = "zonex-ticket-qr.png") => {
+const buildQrEmailAttachment = (qrDataUrl, filename = "techmnhub-ticket-qr.png") => {
   if (!qrDataUrl || typeof qrDataUrl !== "string") {
     return null;
   }

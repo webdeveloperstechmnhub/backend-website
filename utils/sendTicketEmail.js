@@ -83,7 +83,7 @@ const sendTicketEmail = async (userInput) => {
 
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 30px; background: #f9f9f9;">
-        <h1 style="color: #06b6d4; text-align: center;">🎟️ Zonex 2026 – Registration Confirmed</h1>
+        <h1 style="color: #06b6d4; text-align: center;">🎟️ TechMNHub – Registration Confirmed</h1>
         <p style="font-size: 18px;">Hello <strong>${user.fullName}</strong>,</p>
         <p>Thank you for registering! Your payment was successful.</p>
         
@@ -93,7 +93,7 @@ const sendTicketEmail = async (userInput) => {
 
           ${qrBlock}
           
-          <p><strong>Event:</strong> Zonex 2026 | 7 March 2026 | Muzaffarnagar</p>
+          <p><strong>Event:</strong> TechMNHub | 7 March 2026 | Muzaffarnagar</p>
           <p><strong>Category:</strong> ${user.category || "Not specified"}</p>
           <p><strong>Activities Selected:</strong><br> ${activitiesList}</p>
           
@@ -115,7 +115,7 @@ const sendTicketEmail = async (userInput) => {
     const attachments = qrAttachment ? [qrAttachment] : [];
     const result = await sendEmail({
       to: user.email,
-      subject: "✅ Zonex 2026 – Your Ticket",
+      subject: "✅ TechMNHub – Your Ticket",
       html: emailHtml,
       attachments,
     });

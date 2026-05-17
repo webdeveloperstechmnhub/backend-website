@@ -1,7 +1,7 @@
 const nodemailer = require("nodemailer");
 const { Resend } = require("resend");
 
-const RESEND_FROM = process.env.RESEND_FROM || "Zonex 2026 <noreply@techmnhub.com>";
+const RESEND_FROM = process.env.RESEND_FROM || "TechMNHub <noreply@techmnhub.com>";
 const SMTP_FROM = process.env.SMTP_FROM || RESEND_FROM;
 const EMAIL_PROVIDER = String(process.env.EMAIL_PROVIDER || "auto").toLowerCase();
 const MAIL_CONNECT_TIMEOUT_MS = Number(process.env.MAIL_CONNECT_TIMEOUT_MS || 15000);
