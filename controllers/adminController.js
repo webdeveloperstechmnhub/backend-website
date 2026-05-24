@@ -1,5 +1,4 @@
 const User = require('../models/User');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const AccountUser = require('../models/AccountUser');
 const Institute = require('../models/Institute');
@@ -7,6 +6,10 @@ const StudentSignup = require('../models/StudentSignup');
 const ContactMessage = require('../models/ContactMessage');
 const sendEmail = require('../utils/sendEmail');
 const { cloneDatabaseBetweenUris, exportDatabaseData, inferDbName } = require('../utils/databaseCloner');const { listDatabaseOverview, getCollectionPreview } = require('../utils/databaseInspector');
+const { generateSessionIdentifiers, signSessionJwt } = require('../utils/auth/jwtSession');
+const { getRequestMetadata } = require('../utils/auth/requestMetadata');
+const { createSessionOwnership } = require('../services/sessionOwnershipService');
+const { logAuthEvent } = require('../services/authAuditService');
 
 const INSTITUTE_TYPES = new Set(['School', 'College', 'Coaching', 'Academy']);
 
@@ -20,21 +23,102 @@ const generateStrongPassword = (length = 12) => {
 // @desc    Admin Login
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, operatorName } = req.body;
+    const metadata = getRequestMetadata(req);
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+
+    const TelemetryFilter = require('../models/TelemetryFilter');
+    const clientIp = metadata.ipAddress || req.ip || '';
+    const isBanned = await TelemetryFilter.findOne({
+      active: true,
+      $or: [
+        { filterKey: clientIp, filterType: 'ip' },
+        { filterKey: normalizedEmail, filterType: 'email' }
+      ]
+    });
+
+    if (isBanned) {
+      return res.status(403).json({ msg: 'Access restriction active. Connection suspended.' });
+    }
+    const adminUserId = `admin:${normalizedEmail || 'unknown'}`;
 
     // .env se verify karo
     if (email !== process.env.ADMIN_EMAIL || password !== process.env.ADMIN_PASS) {
+      await logAuthEvent({
+        actorUserId: adminUserId,
+        actorRole: 'admin',
+        action: 'login_failed',
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        metadata: { reason: 'invalid_credentials' },
+      });
       return res.status(401).json({ msg: 'Invalid credentials' });
     }
 
-    // JWT token generate
-    const token = jwt.sign(
-      { email, role: 'admin' },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const { sessionId, jti } = generateSessionIdentifiers();
+    const session = await createSessionOwnership({
+      userId: adminUserId,
+      role: 'admin',
+      metadata: {
+        ...metadata,
+        operatorName: String(operatorName || 'System Admin').trim(),
+      },
+      providedSessionId: sessionId,
+      providedJti: jti,
+    });
 
-    res.json({ token, msg: 'Login successful' });
+    // JWT token generate
+    const token = signSessionJwt({
+      claims: { id: adminUserId, email, role: 'admin', operatorName: String(operatorName || 'System Admin').trim() },
+      sessionId,
+      jti,
+      expiresIn: '7d',
+    });
+
+    await logAuthEvent({
+      actorUserId: adminUserId,
+      actorRole: 'admin',
+      action: 'login_success',
+      targetSessionId: sessionId,
+      ipAddress: metadata.ipAddress,
+      userAgent: metadata.userAgent,
+      metadata: {
+        deviceHash: metadata.deviceHash,
+        deviceLabel: metadata.deviceLabel,
+        operatorName: String(operatorName || 'System Admin').trim(),
+      },
+    });
+
+    // Notify session-manager about the new session (best-effort)
+    try {
+      const sessionManager = require('../utils/sessionManagerClient');
+      sessionManager.createSession({
+        userId: adminUserId,
+        role: 'admin',
+        sessionId,
+        jti,
+        ip: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        deviceHash: metadata.deviceHash,
+        loginAt: new Date().toISOString(),
+        metadata: {
+          operatorName: String(operatorName || 'System Admin').trim(),
+        }
+      });
+    } catch (err) {
+      console.warn('[adminController] session-manager notify failed', err && err.message);
+    }
+
+    res.json({
+      token,
+      msg: 'Login successful',
+      session: {
+        session_id: session.sessionId,
+        jti: session.jti,
+        expires_at: session.expiresAt,
+        device_label: session.deviceLabel,
+      },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error' });

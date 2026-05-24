@@ -17,6 +17,8 @@ const siteRoutes = require("./routes/siteRoutes");
 const studentSignupRoutes = require("./routes/studentSignupRoutes");
 const { ensureSeedEventsIfEmpty } = require("./controllers/eventController");
 const sessionRoutes = require("./routes/sessionRoutes");
+const ambassadorRoutes = require("./routes/ambassadorRoutes");
+const adminAmbassadorRoutes = require("./routes/adminAmbassadorRoutes");
 
 const app = express();
 
@@ -84,6 +86,7 @@ mongoose
 // 🔁 Routes
 app.use("/api/register", registrationRoutes);
 app.use("/api/payment", paymentRoutes); // ✅ बिना auth के
+app.use('/api/admin/ambassadors', adminAmbassadorRoutes);
 app.use("/api/admin", adminRoutes); // admin route (यदि है तो)
 app.use("/api/ticket", offlineTicketRoutes); // Offline ticket generator
 app.use("/api/checkin", checkinRoutes); // Check-in system
@@ -92,6 +95,7 @@ app.use("/api/account", accountRoutes); // Institute auth
 app.use("/api/site", siteRoutes); // Homepage and site content
 app.use("/api/sessions", sessionRoutes); // Session booking management
 app.use("/api", studentSignupRoutes); // Student signup flow
+app.use("/api/ambassador", ambassadorRoutes); // Ambassador program
 
 // 🟢 Server Start
 const PORT = process.env.PORT || 5000;

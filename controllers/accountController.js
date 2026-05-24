@@ -1,9 +1,13 @@
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const AccountUser = require('../models/AccountUser');
 const Institute = require('../models/Institute');
 const User = require('../models/User');
+const StudentSignup = require('../models/StudentSignup');
 const InstituteActivity = require('../models/InstituteActivity');
+const { generateSessionIdentifiers, signSessionJwt } = require('../utils/auth/jwtSession');
+const { getRequestMetadata } = require('../utils/auth/requestMetadata');
+const { createSessionOwnership } = require('../services/sessionOwnershipService');
+const { logAuthEvent } = require('../services/authAuditService');
 
 const normalizePoints = (user, fallback = 0) => {
   const base = Number(user.amountPaid || 0);
@@ -16,8 +20,23 @@ const normalizePoints = (user, fallback = 0) => {
 // @desc    Institute account login
 exports.loginInstitute = async (req, res) => {
   try {
+    const metadata = getRequestMetadata(req);
     const email = String(req.body?.email || '').trim().toLowerCase();
     const password = String(req.body?.password || '');
+
+    const TelemetryFilter = require('../models/TelemetryFilter');
+    const clientIp = metadata.ipAddress || req.ip || '';
+    const isBanned = await TelemetryFilter.findOne({
+      active: true,
+      $or: [
+        { filterKey: clientIp, filterType: 'ip' },
+        { filterKey: email, filterType: 'email' }
+      ]
+    });
+
+    if (isBanned) {
+      return res.status(403).json({ msg: 'Access restriction active. Connection suspended.' });
+    }
 
     if (!email || !password) {
       return res.status(400).json({ msg: 'Email and password are required.' });
@@ -25,11 +44,27 @@ exports.loginInstitute = async (req, res) => {
 
     const user = await AccountUser.findOne({ email, role: 'institute' });
     if (!user) {
+      await logAuthEvent({
+        actorUserId: email || 'unknown',
+        actorRole: 'institute',
+        action: 'login_failed',
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        metadata: { reason: 'invalid_credentials', email },
+      });
       return res.status(401).json({ msg: 'Invalid credentials.' });
     }
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
+      await logAuthEvent({
+        actorUserId: String(user._id),
+        actorRole: 'institute',
+        action: 'login_failed',
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        metadata: { reason: 'invalid_credentials', email },
+      });
       return res.status(401).json({ msg: 'Invalid credentials.' });
     }
 
@@ -41,15 +76,62 @@ exports.loginInstitute = async (req, res) => {
       'instituteName type city contactPerson phone verified',
     );
 
-    const token = jwt.sign(
-      { id: user._id.toString(), email: user.email, role: 'institute' },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' },
-    );
+    const { sessionId, jti } = generateSessionIdentifiers();
+    const session = await createSessionOwnership({
+      userId: user._id.toString(),
+      role: 'institute',
+      metadata,
+      providedSessionId: sessionId,
+      providedJti: jti,
+    });
+
+    const token = signSessionJwt({
+      claims: { id: user._id.toString(), email: user.email, role: 'institute' },
+      sessionId,
+      jti,
+      expiresIn: '7d',
+    });
+
+    await logAuthEvent({
+      actorUserId: user._id.toString(),
+      actorRole: 'institute',
+      action: 'login_success',
+      targetSessionId: sessionId,
+      ipAddress: metadata.ipAddress,
+      userAgent: metadata.userAgent,
+      metadata: {
+        email: user.email,
+        deviceHash: metadata.deviceHash,
+        deviceLabel: metadata.deviceLabel,
+      },
+    });
+
+    // Notify session-manager about the new session (best-effort)
+    try {
+      const sessionManager = require('../utils/sessionManagerClient');
+      sessionManager.createSession({
+        userId: user._id.toString(),
+        role: 'institute',
+        sessionId,
+        jti,
+        ip: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        deviceHash: metadata.deviceHash,
+        loginAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('[accountController] session-manager notify failed', err && err.message);
+    }
 
     return res.json({
       msg: 'Institute login successful.',
       token,
+      session: {
+        session_id: session.sessionId,
+        jti: session.jti,
+        expires_at: session.expiresAt,
+        device_label: session.deviceLabel,
+      },
       user: {
         id: user._id,
         email: user.email,
@@ -196,13 +278,24 @@ exports.getInstituteStudents = async (req, res) => {
 // @desc    Public leaderboard data
 exports.getLeaderboard = async (_req, res) => {
   try {
-    const users = await User.find().sort({ createdAt: -1 }).limit(120);
+    const demoPattern = /(demo|dummy|sample|test)/i;
 
-    const ranked = users
-      .map((item, index) => ({
+    const students = await StudentSignup.find({ status: 'approved' })
+      .select('fullName email points createdAt')
+      .sort({ points: -1, createdAt: 1 })
+      .limit(500);
+
+    const ranked = students
+      .filter((item) => {
+        const name = String(item.fullName || '').trim();
+        const email = String(item.email || '').trim();
+        if (!name) return false;
+        return !demoPattern.test(name) && !demoPattern.test(email);
+      })
+      .map((item) => ({
         id: item._id,
         name: item.fullName,
-        points: normalizePoints(item, Math.max(300, 1200 - index * 12)),
+        points: Number(item.points || 0),
       }))
       .sort((a, b) => b.points - a.points)
       .map((item, index) => ({

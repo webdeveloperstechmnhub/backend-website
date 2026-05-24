@@ -20,6 +20,8 @@ const studentSignupSchema = new mongoose.Schema(
     reviewedAt: { type: Date },
     reviewedBy: { type: String, trim: true },
     decisionNote: { type: String, trim: true },
+    points: { type: Number, default: 0 },
+    badges: { type: [String], default: [] },
   },
   { timestamps: true },
 );
