@@ -46,7 +46,8 @@ app.use(
       "https://tickets-generator.pages.dev",
       "https://techmnhub-1.pages.dev",
       "https://techmnhub-frontend.pages.dev",
-      "https://admin-techmnhub.pages.dev"
+      "https://admin-techmnhub.pages.dev",
+      "https://session-manager-atex.onrender.com"
     ],
     credentials: true,
   }),
