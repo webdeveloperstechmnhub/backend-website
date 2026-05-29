@@ -47,7 +47,8 @@ app.use(
       "https://techmnhub-1.pages.dev",
       "https://techmnhub-frontend.pages.dev",
       "https://admin-techmnhub.pages.dev",
-      "https://session-manager-atex.onrender.com"
+      "https://session-manager-atex.onrender.com",
+      "http://127.0.0.1:5500"
     ],
     credentials: true,
   }),

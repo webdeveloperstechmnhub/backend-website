@@ -27,6 +27,20 @@ const slugifyTicketKey = (value, fallback = 'ticket') => {
   return normalized || fallback;
 };
 
+const normalizeEmail = (value = '') => String(value || '').trim().toLowerCase();
+
+const buildRegistrationEventKey = ({ eventId, eventShortName, targetEvent }) => {
+  if (eventId) {
+    return `event:${String(eventId).trim()}`;
+  }
+
+  if (targetEvent?._id) {
+    return `event:${String(targetEvent._id).trim()}`;
+  }
+
+  return `short:${slugifyTicketKey(eventShortName || targetEvent?.shortName || 'zonex-2026', 'zonex-2026')}`;
+};
+
 const normalizeEventTicketTypes = (event) => {
   const ticketTypes = Array.isArray(event?.ticketTypes) ? event.ticketTypes : [];
   if (ticketTypes.length > 0) {
@@ -232,9 +246,10 @@ exports.registerUser = async (req, res) => {
       if (!targetEvent) {
         return res.status(404).json({ msg: 'Event not found' });
       }
-    } else if (eventShortName) {
+    } else {
+      const lookupShortName = eventShortName || 'Zonex 2026';
       targetEvent = await Event.findOne({
-        shortName: { $regex: new RegExp(`^${escapeRegex(eventShortName.trim())}$`, 'i') },
+        shortName: { $regex: new RegExp(`^${escapeRegex(lookupShortName.trim())}$`, 'i') },
       });
     }
 
@@ -255,13 +270,19 @@ exports.registerUser = async (req, res) => {
     }
 
     const incomingAmountPaid = Number(amountPaid);
+    const normalizedEmail = normalizeEmail(email);
+    const eventKey = buildRegistrationEventKey({ eventId, eventShortName, targetEvent });
 
     // 👇 Validate amountPaid
     if (!Number.isFinite(incomingAmountPaid) || incomingAmountPaid < 0) {
       return res.status(400).json({ msg: 'Valid amountPaid is required' });
     }
 
-    let user = await User.findOne({ email });
+    if (!normalizedEmail) {
+      return res.status(400).json({ msg: 'Valid email is required' });
+    }
+
+    let user = await User.findOne({ email: normalizedEmail, eventKey });
     const normalizedTicketTypes = targetEvent ? normalizeEventTicketTypes(targetEvent) : [];
     const selectedTicketType = normalizedTicketTypes.find((ticketType) => {
       return ticketType.key === incomingPassType
@@ -289,7 +310,7 @@ exports.registerUser = async (req, res) => {
       try {
         referralResult = await calculateReferralDiscount({
           targetEvent,
-          email,
+          email: normalizedEmail,
           referralCode,
           baseAmount: originalAmountPaid,
         });
@@ -348,6 +369,7 @@ exports.registerUser = async (req, res) => {
         github,
         instagram,
         customFields,
+        eventKey,
       }, {
         amountPaid: payableAmount,
         originalAmountPaid,
@@ -357,8 +379,8 @@ exports.registerUser = async (req, res) => {
         passName: resolvedTicketType.name,
         passType: resolvedTicketType.key,
         ticketQuantity,
-        eventId: eventId || user.eventId || null,
-        eventShortName: eventShortName || user.eventShortName || 'Zonex 2026',
+        eventId: eventId || (targetEvent?._id ? String(targetEvent._id) : user.eventId || null),
+        eventShortName: eventShortName || targetEvent?.shortName || user.eventShortName || 'Zonex 2026',
         referralCode: normalizedReferralCode,
         referralCodeApplied: Boolean(normalizedReferralCode),
       });
@@ -392,7 +414,7 @@ exports.registerUser = async (req, res) => {
       github,
       instagram,
       customFields,
-      email,
+      email: normalizedEmail,
       amountPaid: payableAmount,
       originalAmountPaid,
       referralDiscountAmount,
@@ -402,8 +424,9 @@ exports.registerUser = async (req, res) => {
       passName: resolvedTicketType.name,
       passType: resolvedTicketType.key,
       ticketQuantity,
-      eventId: eventId || null,
-      eventShortName: eventShortName || 'Zonex 2026',
+      eventId: eventId || (targetEvent?._id ? String(targetEvent._id) : null),
+      eventShortName: eventShortName || targetEvent?.shortName || 'Zonex 2026',
+      eventKey,
       registrationId,
       paymentStatus: payableAmount === 0 ? 'paid' : 'pending',
       referralCode: normalizedReferralCode,

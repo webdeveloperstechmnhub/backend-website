@@ -6,14 +6,33 @@ const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
 const { generateTicketPDF } = require("../utils/generateTicketPDF");
 const { buildSummerEmail } = require("./paymentController");
 
-// Generate unique registration ID with event-specific prefix
-function generateRegistrationId(eventShortName) {
-  const slug = (eventShortName || "EVT")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 8);
-  const random = Math.floor(100000 + Math.random() * 900000);
-  return `${slug}-${random}`;
+const normalizeEmail = (value = '') => String(value || '').trim().toLowerCase();
+
+const buildRegistrationEventKey = ({ eventId, eventShortName, event }) => {
+  if (eventId) {
+    return `event:${String(eventId).trim()}`;
+  }
+
+  if (event?._id) {
+    return `event:${String(event._id).trim()}`;
+  }
+
+  return `short:${String(eventShortName || event?.shortName || 'zonex-2026')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'zonex-2026'}`;
+};
+
+const isSummerRegistration = (event, eventShortName = '') => (
+  (event && (event.eventType === 'summer_camp' || String(event.shortName || '').toLowerCase().includes('summer')))
+  || String(eventShortName || '').toLowerCase().includes('summer')
+);
+
+function generateRegistrationId(event, eventShortName) {
+  return isSummerRegistration(event, eventShortName)
+    ? `SUMMER-${Date.now()}`
+    : `ZNX-${Date.now()}`;
 }
 
 // Generate ticket for offline registration
@@ -53,6 +72,11 @@ exports.generateOfflineTicket = async (req, res) => {
       return res.status(400).json({ msg: "Please select at least one activity" });
     }
 
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) {
+      return res.status(400).json({ msg: "Please provide a valid email" });
+    }
+
     // Load event if provided, for prefix and email branding
     let event = null;
     let resolvedEventShortName = eventShortName || "EVT";
@@ -63,8 +87,10 @@ exports.generateOfflineTicket = async (req, res) => {
       resolvedEventShortName = event.shortName || event.name || resolvedEventShortName;
     }
 
-    // Check if email already exists (scope by event if provided)
-    const emailQuery = eventId ? { email, eventId } : { email };
+    const eventKey = buildRegistrationEventKey({ eventId, eventShortName: resolvedEventShortName, event });
+
+    // Check if email already exists for this event scope.
+    const emailQuery = { email: normalizedEmail, eventKey };
     const existingUser = await User.findOne(emailQuery);
     if (existingUser) {
       return res.status(400).json({
@@ -76,7 +102,7 @@ exports.generateOfflineTicket = async (req, res) => {
     let registrationId;
     let isUnique = false;
     while (!isUnique) {
-      registrationId = generateRegistrationId(resolvedEventShortName);
+      registrationId = generateRegistrationId(event, resolvedEventShortName);
       const existing = await User.findOne({ registrationId });
       if (!existing) isUnique = true;
     }
@@ -88,7 +114,7 @@ exports.generateOfflineTicket = async (req, res) => {
     const newUser = new User({
       fullName,
       mobile,
-      email,
+      email: normalizedEmail,
       city,
       college,
       courseYear,
@@ -104,6 +130,7 @@ exports.generateOfflineTicket = async (req, res) => {
       instagram,
       registrationId,
       qrCode,
+      eventKey,
       paymentStatus: "paid",
       paymentId: `OFFLINE_${Date.now()}`,
       ...(eventId && { eventId }),
@@ -155,8 +182,7 @@ exports.sendOfflineTicketEmail = async (req, res) => {
 
     // Build email — same template logic as the website frontend (paymentController)
     const eventShortNameLower = String(user.eventShortName || eventName || '').toLowerCase();
-    const isSummer = eventShortNameLower.includes('summer') || eventShortNameLower.includes('future skills') ||
-      (eventObj && (eventObj.eventType === 'summer_camp' || String(eventObj.shortName || '').toLowerCase().includes('summer')));
+    const isSummer = isSummerRegistration(eventObj, eventShortNameLower) || eventShortNameLower.includes('future skills');
 
     // Create activities list
     const activitiesList = user.subCategory && user.subCategory.length > 0

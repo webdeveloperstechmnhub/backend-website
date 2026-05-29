@@ -1,8 +1,152 @@
 const User = require("../models/User");
 const Employee = require("../models/Employee");
+const Event = require("../models/Event");
 const generateQR = require("../utils/generateQR");
 const sendEmail = require("../utils/sendEmail");
 const Attendance = require("../models/Attendance");
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const toValidDate = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const toLocalDayKey = (date = new Date()) => {
+  const localDate = date instanceof Date ? date : new Date(date);
+  return [
+    localDate.getFullYear(),
+    String(localDate.getMonth() + 1).padStart(2, "0"),
+    String(localDate.getDate()).padStart(2, "0"),
+  ].join("-");
+};
+
+const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const endOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+
+const formatCheckinDate = (date) => {
+  const resolved = toValidDate(date);
+  if (!resolved) return null;
+  return resolved.toLocaleString("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+};
+
+const isTruthy = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+};
+
+const addDays = (date, days) => {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+  return endOfDay(next);
+};
+
+const parseDurationFromCampDates = (campDates = "") => {
+  const normalized = String(campDates || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+
+  const rangeMatch = normalized.match(/(\d{1,2}).*?(\d{1,2}).*?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*.*?(\d{4})/i);
+  if (!rangeMatch) return null;
+
+  const [, startDay, endDay, month, year] = rangeMatch;
+  const startDate = new Date(`${startDay} ${month} ${year}`);
+  const endDate = new Date(`${endDay} ${month} ${year}`);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
+    return null;
+  }
+
+  return {
+    startDate: startOfDay(startDate),
+    endDate: endOfDay(endDate),
+    durationDays: Math.max(Math.round((endOfDay(endDate).getTime() - startOfDay(startDate).getTime()) / DAY_MS) + 1, 1),
+  };
+};
+
+const resolveEventLookupQuery = (user) => {
+  if (user?.eventId) {
+    return { _id: user.eventId };
+  }
+
+  if (user?.eventShortName) {
+    return {
+      shortName: { $regex: new RegExp(`^${escapeRegex(String(user.eventShortName).trim())}$`, "i") },
+    };
+  }
+
+  return null;
+};
+
+const resolveCheckinWindow = (event, user) => {
+  const eventType = String(event?.eventType || "").toLowerCase();
+  const eventDate = toValidDate(event?.startDate || event?.date);
+  const eventEndDate = toValidDate(event?.endDate);
+  const campDatesWindow = parseDurationFromCampDates(event?.summerCampConfig?.campDates);
+
+  if (campDatesWindow) {
+    return campDatesWindow;
+  }
+
+  if (eventType === "summer_camp") {
+    const startDate = startOfDay(eventDate || new Date());
+    const endDate = eventEndDate ? endOfDay(eventEndDate) : addDays(startDate, 9);
+    return {
+      startDate,
+      endDate,
+      durationDays: 10,
+    };
+  }
+
+  if (eventDate || eventEndDate) {
+    const startDate = startOfDay(eventDate || eventEndDate);
+    const endDate = endOfDay(eventEndDate || eventDate || new Date());
+    return {
+      startDate,
+      endDate,
+      durationDays: Math.max(Math.round((endDate.getTime() - startDate.getTime()) / DAY_MS) + 1, 1),
+    };
+  }
+
+  const fallbackDate = toValidDate(user?.checkInTime) || new Date();
+  return {
+    startDate: startOfDay(fallbackDate),
+    endDate: endOfDay(fallbackDate),
+    durationDays: 1,
+  };
+};
+
+const getAttendanceSummary = async (user, event) => {
+  const attendanceFilter = { registrationId: user.registrationId };
+  if (event?._id) {
+    attendanceFilter.eventId = String(event._id);
+  }
+
+  const [attendanceCount, latestAttendance, todayAttendance] = await Promise.all([
+    Attendance.countDocuments(attendanceFilter),
+    Attendance.findOne(attendanceFilter).sort({ createdAt: -1 }).lean(),
+    Attendance.findOne({ ...attendanceFilter, session: toLocalDayKey() }).lean(),
+  ]);
+
+  return {
+    attendanceCount,
+    latestAttendance,
+    todayAttendance,
+  };
+};
+
+const getResolvedEvent = async (user) => {
+  const lookup = resolveEventLookupQuery(user);
+  if (!lookup) return null;
+  return Event.findOne(lookup);
+};
 
 const buildTerminationLetterHtml = ({ employeeName, empId, terminationDate, reason }) => {
   const dateText = new Date(terminationDate).toLocaleDateString("en-IN", {
@@ -336,15 +480,39 @@ exports.verifyRegistration = async (req, res) => {
       return res.status(404).json({ msg: "Registration not found" });
     }
 
-    if (user.checkedIn) {
-      return res.status(200).json({
-        msg: "Already checked in",
-        user,
-        alreadyCheckedIn: true,
-      });
-    }
+    const event = await getResolvedEvent(user);
+    const { attendanceCount, latestAttendance, todayAttendance } = await getAttendanceSummary(user, event);
+    const window = resolveCheckinWindow(event, user);
+    const now = new Date();
+    const eventOpen = now >= window.startDate && now <= window.endDate;
+    const checkinStartText = formatCheckinDate(window.startDate);
+    const checkinEndText = formatCheckinDate(window.endDate);
 
-    res.json({ msg: "Registration verified", user });
+    res.json({
+      msg: eventOpen
+        ? "Registration verified"
+        : `Registration verified, but the event check-in window opens on ${checkinStartText || "the scheduled start date"}`,
+      user: {
+        ...user.toObject(),
+        checkedIn: Boolean(todayAttendance),
+        checkInTime: latestAttendance?.createdAt || user.checkInTime || null,
+        attendanceCount,
+        maxCheckins: window.durationDays,
+        remainingCheckins: Math.max(window.durationDays - attendanceCount, 0),
+        eventCheckinOpen: eventOpen,
+        checkinStartDate: window.startDate,
+        checkinEndDate: window.endDate,
+        checkinStartText,
+        checkinEndText,
+      },
+      alreadyCheckedIn: Boolean(todayAttendance),
+      attendanceCount,
+      maxCheckins: window.durationDays,
+      remainingCheckins: Math.max(window.durationDays - attendanceCount, 0),
+      eventCheckinOpen: eventOpen,
+      checkinStartText,
+      checkinEndText,
+    });
 
   } catch (err) {
     console.error("Verify error:", err);
@@ -369,22 +537,65 @@ exports.checkInParticipant = async (req, res) => {
       return res.status(404).json({ msg: "User not found" });
     }
 
-    if (user.checkedIn) {
-      return res.status(400).json({ msg: "Already checked in" });
+    const event = await getResolvedEvent(user);
+    const window = resolveCheckinWindow(event, user);
+    const now = new Date();
+    const allowEarlyCheckin =
+      isTruthy(req.body?.allowEarlyCheckin) ||
+      isTruthy(req.query?.allowEarlyCheckin);
+    const allowRepeatToday =
+      isTruthy(req.body?.allowRepeatToday) ||
+      isTruthy(req.query?.allowRepeatToday);
+
+    if (now < window.startDate && !allowEarlyCheckin) {
+      return res.status(403).json({
+        msg: `Check-in has not started for this event yet. It opens on ${formatCheckinDate(window.startDate) || "the scheduled start date"}.`,
+        checkinStartDate: window.startDate,
+        checkinEndDate: window.endDate,
+      });
+    }
+
+    if (now > window.endDate) {
+      return res.status(403).json({
+        msg: "Check-in is closed for this event.",
+        checkinStartDate: window.startDate,
+        checkinEndDate: window.endDate,
+      });
+    }
+
+    const { attendanceCount, todayAttendance } = await getAttendanceSummary(user, event);
+    if (attendanceCount >= window.durationDays) {
+      return res.status(403).json({
+        msg: "Check-in limit reached for this event.",
+        maxCheckins: window.durationDays,
+        attendanceCount,
+      });
+    }
+
+    if (todayAttendance && !allowRepeatToday) {
+      return res.status(409).json({
+        msg: "Already checked in today.",
+        alreadyCheckedIn: true,
+        attendanceCount,
+        maxCheckins: window.durationDays,
+        remainingCheckins: Math.max(window.durationDays - attendanceCount, 0),
+      });
     }
 
     user.checkedIn = true;
-    user.checkInTime = new Date();
+    user.checkInTime = now;
     await user.save();
+
+    const sessionKey = toLocalDayKey(now);
 
     // Record an attendance entry for this check-in (keeps historical records)
     try {
       await Attendance.create({
         userId: user._id,
-        eventId: user.eventId || req.body.eventId || '',
+        eventId: event?._id ? String(event._id) : (user.eventId || req.body.eventId || ''),
         registrationId: user.registrationId,
         markedBy: req.body.markedBy || req.admin?.email || 'scanner',
-        session: req.body.session || ''
+        session: req.body.session || sessionKey,
       });
     } catch (attErr) {
       console.warn('Failed to write attendance record:', attErr.message || attErr);
@@ -392,7 +603,23 @@ exports.checkInParticipant = async (req, res) => {
 
     console.log(`✅ Check-in: ${user.fullName} (${user.registrationId})`);
 
-    res.json({ msg: "Check-in successful", user, checkedInAt: user.checkInTime });
+    const updatedAttendanceCount = attendanceCount + 1;
+    res.json({
+      msg: "Check-in successful",
+      user: {
+        ...user.toObject(),
+        checkedIn: true,
+        checkInTime: user.checkInTime,
+        attendanceCount: updatedAttendanceCount,
+        maxCheckins: window.durationDays,
+        remainingCheckins: Math.max(window.durationDays - updatedAttendanceCount, 0),
+        eventCheckinOpen: true,
+      },
+      checkedInAt: user.checkInTime,
+      attendanceCount: updatedAttendanceCount,
+      maxCheckins: window.durationDays,
+      remainingCheckins: Math.max(window.durationDays - updatedAttendanceCount, 0),
+    });
 
   } catch (err) {
     console.error("Check-in error:", err);
@@ -415,12 +642,15 @@ exports.createAttendance = async (req, res) => {
 
     if (!user) return res.status(404).json({ msg: 'User not found' });
 
+    const event = await getResolvedEvent(user);
+    const sessionKey = session || toLocalDayKey();
+
     const att = await Attendance.create({
       userId: user._id,
-      eventId: eventId || user.eventId || '',
+      eventId: event?._id ? String(event._id) : (eventId || user.eventId || ''),
       registrationId: user.registrationId,
       markedBy: markedBy || req.admin?.email || 'scanner',
-      session: session || ''
+      session: sessionKey,
     });
 
     res.json({ msg: 'Attendance recorded', attendance: att });
@@ -462,7 +692,9 @@ exports.getCheckinStats = async (req, res) => {
     const filter = eventId ? { eventId } : {};
 
     const total = await User.countDocuments(filter);
-    const checkedIn = await User.countDocuments({ ...filter, checkedIn: true });
+    const checkedIn = eventId
+      ? await Attendance.distinct('registrationId', { eventId }).then((items) => items.length)
+      : await User.countDocuments({ checkedIn: true });
     const pending = total - checkedIn;
 
     res.json({

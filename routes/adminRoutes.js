@@ -5,7 +5,6 @@ const {
   getAllUsers,
   getUser,
   deleteUser,
-  checkInUser,
   getStats,
   getStudentSignups,
   reviewStudentSignup,
@@ -23,6 +22,7 @@ const {
   updateEmployee,
   deleteEmployee,
   terminateEmployee,
+  checkInParticipant,
 } = require('../controllers/checkinController');
 const authMiddleware = require('../middleware/authMiddleware');
 
@@ -33,7 +33,14 @@ router.post('/login', login);
 router.get('/users', authMiddleware, getAllUsers);
 router.get('/users/:id', authMiddleware, getUser);
 router.delete('/users/:id', authMiddleware, deleteUser);
-router.put('/users/:id/checkin', authMiddleware, checkInUser);
+router.put('/users/:id/checkin', authMiddleware, (req, res) => {
+  req.body = {
+    ...(req.body || {}),
+    userId: req.params.id,
+    allowEarlyCheckin: true,
+  };
+  return checkInParticipant(req, res);
+});
 router.get('/stats', authMiddleware, getStats);
 router.get('/student-signups', authMiddleware, getStudentSignups);
 router.patch('/student-signups/:id', authMiddleware, reviewStudentSignup);

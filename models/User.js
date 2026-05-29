@@ -3,7 +3,8 @@ const mongoose = require("mongoose");
 const userSchema = new mongoose.Schema({
   fullName: { type: String, required: true },
   mobile: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: true, lowercase: true, trim: true },
+  eventKey: { type: String, trim: true, index: true },
   college: String,
   courseYear: String,
   city: String,
@@ -71,5 +72,7 @@ const userSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+userSchema.index({ email: 1, eventKey: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("User", userSchema);
