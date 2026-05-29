@@ -204,6 +204,8 @@ exports.sendOfflineTicketEmail = async (req, res) => {
       `;
     }
 
+    const QR_INLINE_CID = 'ticketqr@techmnhub';
+
     let emailHtml = '';
     let subject = '';
     let qrBuffer = null;  // PNG Buffer for CID inline attachment
@@ -221,8 +223,10 @@ exports.sendOfflineTicketEmail = async (req, res) => {
       console.error('⚠️ Email QR generation failed:', qrErr.message);
     }
 
+    const qrImageSrc = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(user.registrationId || '')}`;
+
     if (isSummer) {
-      const built = buildSummerEmail(user);
+      const built = buildSummerEmail(user, qrImageSrc);
       subject = built.subject;
       emailHtml = built.emailHtml;
     } else {
@@ -237,11 +241,11 @@ exports.sendOfflineTicketEmail = async (req, res) => {
             <p><strong>Registration ID:</strong></p>
             <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
 
-            ${qrBuffer ? `
+            ${qrImageSrc ? `
             <div style="text-align: center; margin: 24px 0; padding: 16px; background: #f0f9ff; border-radius: 12px; border: 2px dashed #06b6d4;">
               <p style="font-size: 11px; color: #0891b2; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; font-weight: bold;">🔍 Scan to Check In</p>
               <img
-                src="cid:ticketqr@techmnhub"
+                src="${qrImageSrc}"
                 alt="QR Code"
                 width="180"
                 height="180"
@@ -276,10 +280,10 @@ exports.sendOfflineTicketEmail = async (req, res) => {
     if (qrBuffer) {
       // 1. Inline — cid:ticketqr@techmnhub renders inside email body
       emailAttachments.push({
-        filename: `${user.registrationId}-qr.png`,
+        filename: `${user.registrationId}-qr-inline.png`,
         content: qrBuffer,
         contentType: 'image/png',
-        contentId: 'ticketqr@techmnhub',
+        contentId: QR_INLINE_CID,
         contentDisposition: 'inline',
       });
       // 2. Downloadable PNG — separate file attachment

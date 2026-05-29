@@ -6,7 +6,7 @@ const sendEmail = require("../utils/sendEmail");
 const buildQrEmailAttachment = require("../utils/qrEmailAttachment");
 const { generateTicketPDF } = require("../utils/generateTicketPDF");
 
-const buildSummerEmail = (user) => {
+const buildSummerEmail = (user, qrImageSrc) => {
   const subject = '🚀 Welcome To TechMNHub Future Skills Summer Camp 2026';
   const passColorMap = {
     'Basic Pass': '#1E90FF',
@@ -19,6 +19,8 @@ const buildSummerEmail = (user) => {
   const passColor = passColorMap[user.passName] || passColorMap[user.passType] || '#1E90FF';
   const heroImageUrl = process.env.SUMMER_HERO_IMAGE || '';
   const verificationUrl = (process.env.SITE_URL || 'https://www.techmnhub.com') + `/registration/${encodeURIComponent(user.registrationId)}`;
+
+  const resolvedQrImageSrc = qrImageSrc || user.qrCode || `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(user.registrationId || '')}`;
 
   const emailHtml = `<!doctype html>
   <html>
@@ -88,7 +90,7 @@ const buildSummerEmail = (user) => {
 
                         <td style="vertical-align:top;width:38%;text-align:center;">
                           <div style="display:inline-block;padding:12px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.08));border:1px solid rgba(255,255,255,0.04);">
-                            <img src="cid:ticketqr@techmnhub" alt="QR Code" width="140" height="140" style="display:block;border-radius:10px;border:6px solid rgba(212,175,55,0.08);background:#fff;" />
+                            <img src="${resolvedQrImageSrc}" alt="QR Code" width="140" height="140" style="display:block;border-radius:10px;border:6px solid rgba(212,175,55,0.08);background:#fff;" />
                           </div>
                           <p style="margin:10px 0 0;font-size:12px;color:#cfcfcf;">Scan at entry</p>
                           <div style="margin-top:8px;padding:6px 10px;border-radius:999px;display:inline-block;background:${passColor};color:#0b0b0c;font-weight:800;font-size:12px;">${user.passName || user.passType || ''}</div>
@@ -281,6 +283,8 @@ exports.verifyPayment = async (req, res) => {
     const eventName = String(user.eventShortName || user.eventShortName || '').toLowerCase();
     const isSummer = eventName.includes('summer') || eventName.includes('future skills') || (user.eventShortName && String(user.eventShortName).toLowerCase().includes('summer'));
 
+    const QR_INLINE_CID = 'ticketqr@techmnhub';
+
     let emailHtml = '';
     let subject = '';
     let qrBuffer = null;  // PNG Buffer for CID inline attachment
@@ -298,8 +302,10 @@ exports.verifyPayment = async (req, res) => {
       console.error('⚠️ Email QR generation failed:', qrErr.message);
     }
 
+    const qrImageSrc = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(user.registrationId || '')}`;
+
     if (isSummer) {
-      const built = buildSummerEmail(user);
+      const built = buildSummerEmail(user, qrImageSrc);
       subject = built.subject;
       emailHtml = built.emailHtml;
     } else {
@@ -314,11 +320,11 @@ exports.verifyPayment = async (req, res) => {
             <p><strong>Registration ID:</strong></p>
             <p style="font-size: 28px; font-weight: bold; color: #06b6d4; letter-spacing: 2px;">${user.registrationId}</p>
 
-            ${qrBuffer ? `
+            ${qrImageSrc ? `
             <div style="text-align: center; margin: 24px 0; padding: 16px; background: #f0f9ff; border-radius: 12px; border: 2px dashed #06b6d4;">
               <p style="font-size: 11px; color: #0891b2; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; font-weight: bold;">🔍 Scan to Check In</p>
               <img
-                src="cid:ticketqr@techmnhub"
+                src="${qrImageSrc}"
                 alt="QR Code"
                 width="180"
                 height="180"
@@ -356,10 +362,10 @@ exports.verifyPayment = async (req, res) => {
         if (qrBuffer) {
           // 1. Inline — cid:ticketqr@techmnhub renders inside email body
           emailAttachments.push({
-            filename: `${user.registrationId}-qr.png`,
+            filename: `${user.registrationId}-qr-inline.png`,
             content: qrBuffer,
             contentType: 'image/png',
-            contentId: 'ticketqr@techmnhub',
+            contentId: QR_INLINE_CID,
             contentDisposition: 'inline',
           });
           // 2. Downloadable PNG — separate file attachment

@@ -73,13 +73,20 @@ const getGmailTransporter = () => {
 
 const toResendAttachments = (attachments = []) =>
   attachments.map((file) => {
+    const normalizedContent = Buffer.isBuffer(file.content)
+      ? file.content.toString("base64")
+      : file.content;
+
     const entry = {
       filename: file.filename,
-      content: file.content,           // Buffer or base64 string
+      content: normalizedContent,      // base64 string
       content_type: file.contentType,  // Resend uses content_type, not contentType
     };
     if (file.contentId) {
       entry.content_id = file.contentId;  // Resend uses content_id for inline CID
+    }
+    if (file.contentDisposition) {
+      entry.disposition = file.contentDisposition;
     }
     return entry;
   });
