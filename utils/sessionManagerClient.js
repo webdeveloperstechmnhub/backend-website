@@ -27,7 +27,11 @@ async function postInternal(path, body = {}) {
     }
     return json;
   } catch (err) {
-    console.error('[sessionManagerClient] request failed', err);
+    const code = err && err.code;
+    if (code && ['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET'].includes(code)) {
+      return null;
+    }
+    console.warn('[sessionManagerClient] request failed', err && err.message ? err.message : err);
     return null;
   }
 }

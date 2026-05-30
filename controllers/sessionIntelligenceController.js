@@ -6,6 +6,7 @@ const {
 } = require("../services/sessionOwnershipService");
 const { getRequestMetadata } = require("../utils/auth/requestMetadata");
 const SessionRecord = require("../models/SessionRecord");
+const AuthAuditLog = require("../models/AuthAuditLog");
 
 const mapSessionResponse = (session) => ({
   session_id: session.sessionId,
@@ -158,6 +159,30 @@ exports.getSessionById = async (req, res) => {
   } catch (err) {
     console.error("getSessionById error:", err);
     res.status(500).json({ msg: "Failed to load session details." });
+  }
+};
+
+// Return recent blocked login attempts (third session attempts and failed_login)
+exports.getBlockedAttempts = async (req, res) => {
+  try {
+    const since = new Date(Date.now() - (24 * 60 * 60 * 1000)); // last 24h
+    const items = await AuthAuditLog.find({ action: { $in: ['third_session_attempt', 'failed_login', 'login_failed'] }, createdAt: { $gte: since } }).sort({ createdAt: -1 }).limit(200);
+    res.json({ ok: true, items });
+  } catch (err) {
+    console.error('getBlockedAttempts error:', err);
+    res.status(500).json({ ok: false, msg: 'Failed to load blocked attempts.' });
+  }
+};
+
+// Return recent auth/activity events for dashboard
+exports.getAuthActivities = async (req, res) => {
+  try {
+    const limit = Math.min(500, Number(req.query.limit || 200));
+    const activities = await AuthAuditLog.find({}).sort({ createdAt: -1 }).limit(limit);
+    res.json({ ok: true, activities });
+  } catch (err) {
+    console.error('getAuthActivities error:', err);
+    res.status(500).json({ ok: false, msg: 'Failed to load activities.' });
   }
 };
 

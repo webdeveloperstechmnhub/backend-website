@@ -3,6 +3,19 @@ const mongoose = require("mongoose");
 const employeeSchema = new mongoose.Schema({
   empId: { type: String, required: true, unique: true, index: true },
   name: { type: String, required: true },
+  // Authentication fields for employee accounts
+  passwordHash: { type: String, default: "" },
+  adminAccess: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  accountStatus: {
+    type: String,
+    enum: ["active", "locked", "disabled", "terminated"],
+    default: "active",
+    index: true,
+  },
   employmentStatus: {
     type: String,
     enum: ["active", "terminated"],
@@ -32,9 +45,8 @@ const employeeSchema = new mongoose.Schema({
 employeeSchema.index({ updatedAt: -1, createdAt: -1 });
 employeeSchema.index({ employmentStatus: 1, updatedAt: -1 });
 
-employeeSchema.pre("save", function preSave(next) {
+employeeSchema.pre("save", function preSave() {
   this.updatedAt = new Date();
-  next();
 });
 
 module.exports = mongoose.model("Employee", employeeSchema);

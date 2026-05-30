@@ -12,7 +12,8 @@ const logAuthEvent = async ({
   if (!actorUserId || !action) return;
 
   try {
-    await AuthAuditLog.create({
+    // include more context with employee-friendly fields
+    const payload = {
       actorUserId: String(actorUserId),
       actorRole,
       action,
@@ -20,7 +21,9 @@ const logAuthEvent = async ({
       ipAddress,
       userAgent,
       metadata,
-    });
+    };
+
+    await AuthAuditLog.create(payload);
   } catch (err) {
     console.error("Auth audit logging failed:", err.message || err);
   }

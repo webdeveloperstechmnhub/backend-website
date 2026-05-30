@@ -46,6 +46,9 @@ const getRequestMetadata = (req) => {
   const ipAddress = parseClientIp(req);
   const browser = parseBrowser(userAgent);
   const platform = parsePlatform(userAgent);
+  const geoCity = String(req.headers["cf-ipcity"] || req.headers["x-city"] || "").trim();
+  const geoState = String(req.headers["cf-region"] || req.headers["x-region"] || req.headers["x-state"] || "").trim();
+  const geoCountry = String(req.headers["cf-ipcountry"] || req.headers["x-country"] || "").trim();
 
   return {
     ipAddress,
@@ -60,6 +63,9 @@ const getRequestMetadata = (req) => {
     deviceLabel: `${browser} on ${platform}`,
     browser,
     platform,
+    geoCity,
+    geoState,
+    geoCountry,
   };
 };
 

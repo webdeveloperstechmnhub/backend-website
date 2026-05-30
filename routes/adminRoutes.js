@@ -14,11 +14,15 @@ const {
   getDatabaseCollectionPreview,
   createInstituteAccount,
   getInstitutes,
+  getSystemSettings,
+  setSystemSetting,
 } = require('../controllers/adminController');
 const {
   getEmployees,
   getEmployee,
   upsertEmployee,
+  issueEmployeeCredentials,
+  backfillEmployeeCredentials,
   updateEmployee,
   deleteEmployee,
   terminateEmployee,
@@ -53,8 +57,13 @@ router.post('/institutes', authMiddleware, createInstituteAccount);
 router.get('/employees', authMiddleware, getEmployees);
 router.get('/employees/:empId', authMiddleware, getEmployee);
 router.post('/employees', authMiddleware, upsertEmployee);
+router.post('/employees/:empId/credentials', authMiddleware, issueEmployeeCredentials);
+router.post('/employees/backfill-credentials', authMiddleware, backfillEmployeeCredentials);
 router.put('/employees/:empId', authMiddleware, updateEmployee);
 router.put('/employees/:empId/terminate', authMiddleware, terminateEmployee);
 router.delete('/employees/:empId', authMiddleware, deleteEmployee);
+// System settings
+router.get('/system-settings', authMiddleware, getSystemSettings);
+router.post('/system-settings', authMiddleware, setSystemSetting);
 
 module.exports = router;

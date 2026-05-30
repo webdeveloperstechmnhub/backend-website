@@ -12,6 +12,37 @@ const resolveSessionTtlSeconds = () => {
 };
 
 const createSessionOwnership = async ({ userId, role, metadata = {}, providedSessionId = "", providedJti = "" }) => {
+  // Enforce maximum active sessions per user: 2 sessions for employees, 3 for others (default)
+  try {
+    if (String(role) === 'employee') {
+      const activeCount = await SessionRecord.countDocuments({ userId: String(userId), role, revoked: false, expiresAt: { $gt: new Date() } });
+      if (activeCount >= 2) {
+        // Log the blocked attempt
+        await logAuthEvent({
+          actorUserId: String(userId),
+          actorRole: 'employee',
+          action: 'third_session_attempt',
+          ipAddress: metadata.ipAddress || '',
+          userAgent: metadata.userAgent || '',
+          metadata: {
+            attemptedAt: new Date(),
+            deviceLabel: metadata.deviceLabel,
+            browser: metadata.browser,
+            platform: metadata.platform,
+          },
+        });
+
+        // Throw a structured error that callers can handle
+        const err = new Error('maximum_active_sessions_reached');
+        err.code = 'MAX_SESSIONS_EXCEEDED';
+        throw err;
+      }
+    }
+  } catch (err) {
+    // If counting fails, allow creation to proceed to avoid locking out all users due to a DB hiccup.
+    if (err && err.code === 'MAX_SESSIONS_EXCEEDED') throw err;
+    console.warn('[sessionOwnershipService] active session count check failed', err && err.message);
+  }
   const { sessionId, jti } = providedSessionId && providedJti
     ? { sessionId: providedSessionId, jti: providedJti }
     : generateSessionIdentifiers();
@@ -35,6 +66,20 @@ const createSessionOwnership = async ({ userId, role, metadata = {}, providedSes
       browser: metadata.browser || "",
       platform: metadata.platform || "",
       operatorName: metadata.operatorName || "",
+    },
+  });
+
+  await logAuthEvent({
+    actorUserId: String(userId),
+    actorRole: role,
+    action: 'session_created',
+    targetSessionId: record.sessionId,
+    ipAddress: record.ipAddress,
+    userAgent: record.userAgent,
+    metadata: {
+      ...metadata,
+      sessionId: record.sessionId,
+      jti: record.jti,
     },
   });
 

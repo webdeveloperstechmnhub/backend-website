@@ -37,8 +37,8 @@ module.exports = async (req, res, next) => {
     active: true,
     $or: [
       { filterKey: clientIp, filterType: "ip" },
-      { filterKey: String(decoded.email || "").trim().toLowerCase(), filterType: "email" },
-      { filterKey: String(decoded.id || "").trim(), filterType: "user" }
+      { filterKey: String(decoded.id || "").trim(), filterType: "user" },
+      { filterKey: String(decoded.empId || "").trim(), filterType: "user" }
     ]
   });
 
@@ -57,7 +57,7 @@ module.exports = async (req, res, next) => {
     return res.status(403).json({ msg: "Access restriction active. Connection halted." });
   }
 
-  const tokenUserId = decoded.id || decoded.email || "admin";
+  const tokenUserId = decoded.id || decoded.empId || "admin";
   const validation = await validateSessionFromClaims({
     sessionId: decoded.session_id || decoded.sessionId,
     jti: decoded.jti,

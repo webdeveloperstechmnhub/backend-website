@@ -4,6 +4,8 @@ const Event = require("../models/Event");
 const generateQR = require("../utils/generateQR");
 const sendEmail = require("../utils/sendEmail");
 const Attendance = require("../models/Attendance");
+const bcrypt = require("bcryptjs");
+const { logAuthEvent } = require("../services/authAuditService");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -42,6 +44,40 @@ const isTruthy = (value) => {
   if (typeof value === "number") return value === 1;
   const normalized = String(value || "").trim().toLowerCase();
   return ["1", "true", "yes", "on"].includes(normalized);
+};
+
+const generateStrongPassword = (length = 12) => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%&*';
+  return Array.from({ length })
+    .map(() => chars[Math.floor(Math.random() * chars.length)])
+    .join('');
+};
+
+const sendEmployeeCredentialEmail = async ({ employee, password, reason = 'Employee Login Credentials' }) => {
+  if (!employee?.email || !password) {
+    return { emailStatus: 'skipped', emailError: '' };
+  }
+
+  try {
+    await sendEmail({
+      to: employee.email,
+      subject: `${reason} - ${employee.empId}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
+          <h2>Employee Login Credentials</h2>
+          <p><strong>Employee ID:</strong> ${employee.empId}</p>
+          <p><strong>Name:</strong> ${employee.name}</p>
+          <p><strong>Password:</strong> ${password}</p>
+          <p>Use these credentials to sign in to the employee portal.</p>
+        </div>
+      `,
+    });
+
+    return { emailStatus: 'sent', emailError: '' };
+  } catch (err) {
+    console.error('Employee credential email error:', err);
+    return { emailStatus: 'failed', emailError: err.message || 'Email send failed' };
+  }
 };
 
 const addDays = (date, days) => {
@@ -188,17 +224,27 @@ const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
     designation: String(source.designation || "").trim(),
     department: String(source.department || "").trim(),
     description: String(source.description || "").trim(),
+    adminAccess: isTruthy(source.adminAccess),
   };
 };
 
 // Create or update employee by empId
 exports.upsertEmployee = async (req, res) => {
   try {
-    const { empId, name, photoUrl, mobile, email, joiningDate, designation, department, description } = normalizeEmployeeInput(req.body);
+    const { empId, name, photoUrl, mobile, email, joiningDate, designation, department, description, adminAccess } = normalizeEmployeeInput(req.body);
+    const autoGeneratePassword = isTruthy(req.body?.autoGeneratePassword);
+    const manualPassword = String(req.body?.password || req.body?.manualPassword || '').trim();
+    const sendEmailFlag = req.body?.sendEmail === undefined ? true : isTruthy(req.body?.sendEmail);
+    const hasAdminAccessField = Object.prototype.hasOwnProperty.call(req.body || {}, 'adminAccess');
 
     if (!empId || !name) {
       return res.status(400).json({ msg: "empId and name are required" });
     }
+
+    const existingEmployee = await Employee.findOne({ empId });
+    const shouldAssignPassword = autoGeneratePassword || manualPassword || !String(existingEmployee?.passwordHash || '').trim();
+    const finalPassword = manualPassword || (shouldAssignPassword ? generateStrongPassword(12) : '');
+    const passwordHash = shouldAssignPassword ? await bcrypt.hash(finalPassword, 12) : existingEmployee?.passwordHash;
 
     const employee = await Employee.findOneAndUpdate(
       { empId },
@@ -208,10 +254,13 @@ exports.upsertEmployee = async (req, res) => {
         photoUrl,
         mobile,
         email,
+        passwordHash,
         joiningDate,
         designation,
         department,
         description,
+        adminAccess: hasAdminAccessField ? adminAccess : existingEmployee?.adminAccess || false,
+        accountStatus: existingEmployee?.accountStatus || 'active',
         updatedAt: new Date(),
       },
       {
@@ -223,10 +272,157 @@ exports.upsertEmployee = async (req, res) => {
 
     const qrCode = await generateQR(empId);
 
-    res.status(200).json({ msg: "Employee saved", employee, qrCode });
+    const { emailStatus, emailError } = shouldAssignPassword && sendEmailFlag
+      ? await sendEmployeeCredentialEmail({ employee, password: finalPassword, reason: 'Employee Login Credentials' })
+      : { emailStatus: 'skipped', emailError: '' };
+
+    await logAuthEvent({
+      actorUserId: String(req.admin?.empId || req.admin?.id || 'admin').trim(),
+      actorRole: 'admin',
+      action: existingEmployee ? (shouldAssignPassword ? 'password_change' : 'profile_update') : 'employee_account_provisioning',
+      ipAddress: req.ip || '',
+      userAgent: req.headers['user-agent'] || '',
+      metadata: {
+        employeeId: empId,
+        employeeName: name,
+        adminAccess: hasAdminAccessField ? adminAccess : existingEmployee?.adminAccess || false,
+        passwordCreated: shouldAssignPassword,
+        emailSent: emailStatus === 'sent',
+      },
+    });
+
+    res.status(200).json({
+      msg: "Employee saved",
+      employee,
+      qrCode,
+      credentials: shouldAssignPassword ? { empId, password: finalPassword } : null,
+      emailStatus,
+      emailError,
+    });
   } catch (err) {
     console.error("Employee save error:", err);
     res.status(500).json({ msg: err.message });
+  }
+};
+
+exports.issueEmployeeCredentials = async (req, res) => {
+  try {
+    const empId = String(req.params.empId || req.body?.empId || '').trim();
+    const manualPassword = String(req.body?.password || req.body?.manualPassword || '').trim();
+    const autoGeneratePassword = isTruthy(req.body?.autoGeneratePassword) || !manualPassword;
+    const sendEmailFlag = req.body?.sendEmail === undefined ? true : isTruthy(req.body?.sendEmail);
+
+    if (!empId) {
+      return res.status(400).json({ msg: 'empId required' });
+    }
+
+    const employee = await Employee.findOne({ empId });
+    if (!employee) {
+      return res.status(404).json({ msg: 'Employee not found' });
+    }
+
+    const hadExistingPassword = Boolean(String(employee.passwordHash || '').trim());
+
+    const finalPassword = manualPassword || generateStrongPassword(12);
+    const passwordHash = await bcrypt.hash(finalPassword, 12);
+
+    employee.passwordHash = passwordHash;
+    if (!employee.accountStatus || employee.accountStatus === 'disabled') {
+      employee.accountStatus = 'active';
+    }
+    await employee.save();
+
+    const emailResult = sendEmailFlag
+      ? await sendEmployeeCredentialEmail({ employee, password: finalPassword, reason: 'Employee Credentials Issued' })
+      : { emailStatus: 'skipped', emailError: '' };
+
+    await logAuthEvent({
+      actorUserId: String(req.admin?.empId || req.admin?.id || 'admin').trim(),
+      actorRole: 'admin',
+      action: hadExistingPassword ? 'password_change' : 'password_creation',
+      ipAddress: req.ip || '',
+      userAgent: req.headers['user-agent'] || '',
+      metadata: {
+        employeeId: employee.empId,
+        employeeName: employee.name,
+        adminAccess: employee.adminAccess,
+        emailSent: emailResult.emailStatus === 'sent',
+      },
+    });
+
+    return res.json({
+      msg: 'Employee credentials issued',
+      employee,
+      credentials: {
+        empId,
+        password: finalPassword,
+      },
+      ...emailResult,
+    });
+  } catch (err) {
+    console.error('Issue employee credentials error:', err);
+    res.status(500).json({ msg: err.message || 'Failed to issue credentials' });
+  }
+};
+
+exports.backfillEmployeeCredentials = async (req, res) => {
+  try {
+    const sendEmailFlag = req.body?.sendEmail === undefined ? true : isTruthy(req.body?.sendEmail);
+    const limit = Math.min(500, Math.max(1, Number(req.body?.limit || 100)));
+    const filter = {
+      $or: [
+        { passwordHash: { $exists: false } },
+        { passwordHash: '' },
+        { passwordHash: null },
+      ],
+    };
+    const employees = await Employee.find(filter)
+      .sort({ _id: 1 })
+      .limit(limit);
+
+    const results = [];
+    for (const employee of employees) {
+      const password = generateStrongPassword(12);
+      employee.passwordHash = await bcrypt.hash(password, 12);
+      if (!employee.accountStatus || employee.accountStatus === 'disabled') {
+        employee.accountStatus = 'active';
+      }
+      await employee.save();
+
+      const emailResult = sendEmailFlag
+        ? await sendEmployeeCredentialEmail({ employee, password, reason: 'Employee Credentials Backfill' })
+        : { emailStatus: 'skipped', emailError: '' };
+
+      await logAuthEvent({
+        actorUserId: String(req.admin?.empId || req.admin?.id || 'admin').trim(),
+        actorRole: 'admin',
+        action: 'password_creation',
+        ipAddress: req.ip || '',
+        userAgent: req.headers['user-agent'] || '',
+        metadata: {
+          employeeId: employee.empId,
+          employeeName: employee.name,
+          adminAccess: employee.adminAccess,
+          emailSent: emailResult.emailStatus === 'sent',
+          backfill: true,
+        },
+      });
+
+      results.push({
+        empId: employee.empId,
+        email: employee.email,
+        ...emailResult,
+      });
+    }
+
+    res.json({
+      msg: 'Employee credential backfill complete',
+      processed: results.length,
+      results,
+    });
+  } catch (err) {
+    console.error('Backfill employee credentials error:', err);
+    res.status(500).json({ msg: err.message || 'Failed to backfill employee credentials' });
   }
 };
 
@@ -256,7 +452,7 @@ exports.getEmployees = async (req, res) => {
         .sort({ updatedAt: sortOrder, createdAt: sortOrder })
         .skip(skip)
         .limit(limit)
-        .select("empId name employmentStatus photoUrl mobile email joiningDate designation department description terminationDate terminationReason terminationLetterSentAt updatedAt createdAt")
+        .select("empId name adminAccess employmentStatus photoUrl mobile email joiningDate designation department description terminationDate terminationReason terminationLetterSentAt updatedAt createdAt")
         .allowDiskUse(true)
         .lean(),
       Employee.countDocuments(filter),
@@ -331,6 +527,7 @@ exports.updateEmployee = async (req, res) => {
         department: payload.department,
         description: payload.description,
         updatedAt: new Date(),
+        ...(Object.prototype.hasOwnProperty.call(req.body || {}, 'adminAccess') ? { adminAccess: isTruthy(req.body.adminAccess) } : {}),
       },
       {
         returnDocument: "after",
@@ -341,6 +538,19 @@ exports.updateEmployee = async (req, res) => {
     if (!employee) {
       return res.status(404).json({ msg: "Employee not found" });
     }
+
+    await logAuthEvent({
+      actorUserId: String(req.admin?.empId || req.admin?.id || 'admin').trim(),
+      actorRole: 'admin',
+      action: 'profile_update',
+      ipAddress: req.ip || '',
+      userAgent: req.headers['user-agent'] || '',
+      metadata: {
+        employeeId: empId,
+        employeeName: employee.name,
+        adminAccess: employee.adminAccess,
+      },
+    });
 
     res.json({ msg: "Employee updated", employee });
   } catch (err) {

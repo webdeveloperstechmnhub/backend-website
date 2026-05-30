@@ -17,6 +17,7 @@ const siteRoutes = require("./routes/siteRoutes");
 const studentSignupRoutes = require("./routes/studentSignupRoutes");
 const { ensureSeedEventsIfEmpty } = require("./controllers/eventController");
 const sessionRoutes = require("./routes/sessionRoutes");
+const employeeAuthRoutes = require("./routes/employeeAuthRoutes");
 const ambassadorRoutes = require("./routes/ambassadorRoutes");
 const adminAmbassadorRoutes = require("./routes/adminAmbassadorRoutes");
 
@@ -98,6 +99,7 @@ app.use("/api/account", accountRoutes); // Institute auth
 app.use("/api/site", siteRoutes); // Homepage and site content
 app.use("/api/sessions", sessionRoutes); // Session booking management
 app.use("/api", studentSignupRoutes); // Student signup flow
+app.use('/api/employee', employeeAuthRoutes);
 app.use("/api/ambassador", ambassadorRoutes); // Ambassador program
 
 // 🟢 Server Start

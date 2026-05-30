@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
+const Employee = require('../models/Employee');
 const AccountUser = require('../models/AccountUser');
 const Institute = require('../models/Institute');
 const StudentSignup = require('../models/StudentSignup');
@@ -10,6 +11,7 @@ const { generateSessionIdentifiers, signSessionJwt } = require('../utils/auth/jw
 const { getRequestMetadata } = require('../utils/auth/requestMetadata');
 const { createSessionOwnership } = require('../services/sessionOwnershipService');
 const { logAuthEvent } = require('../services/authAuditService');
+const SystemSetting = require('../models/SystemSetting');
 
 const INSTITUTE_TYPES = new Set(['School', 'College', 'Coaching', 'Academy']);
 
@@ -23,9 +25,9 @@ const generateStrongPassword = (length = 12) => {
 // @desc    Admin Login
 exports.login = async (req, res) => {
   try {
-    const { email, password, operatorName } = req.body;
+    const { empId, password, operatorName } = req.body;
     const metadata = getRequestMetadata(req);
-    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const normalizedEmpId = String(empId || '').trim();
 
     const TelemetryFilter = require('../models/TelemetryFilter');
     const clientIp = metadata.ipAddress || req.ip || '';
@@ -33,17 +35,50 @@ exports.login = async (req, res) => {
       active: true,
       $or: [
         { filterKey: clientIp, filterType: 'ip' },
-        { filterKey: normalizedEmail, filterType: 'email' }
+        { filterKey: normalizedEmpId, filterType: 'user' }
       ]
     });
 
     if (isBanned) {
       return res.status(403).json({ msg: 'Access restriction active. Connection suspended.' });
     }
-    const adminUserId = `admin:${normalizedEmail || 'unknown'}`;
+    if (!normalizedEmpId || !password) {
+      return res.status(400).json({ msg: 'empId and password are required' });
+    }
 
-    // .env se verify karo
-    if (email !== process.env.ADMIN_EMAIL || password !== process.env.ADMIN_PASS) {
+    let adminEmployee = await Employee.findOne({ empId: normalizedEmpId });
+    if (!adminEmployee && normalizedEmpId.includes('@')) {
+      adminEmployee = await Employee.findOne({ email: normalizedEmpId.toLowerCase() });
+    }
+
+    const adminUserId = `admin:${normalizedEmpId || 'unknown'}`;
+
+    if (!adminEmployee) {
+      await logAuthEvent({
+        actorUserId: adminUserId,
+        actorRole: 'admin',
+        action: 'login_failed',
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        metadata: { reason: 'admin_employee_not_found' },
+      });
+      return res.status(404).json({ msg: 'Admin employee not found' });
+    }
+
+    if (adminEmployee.accountStatus !== 'active' || adminEmployee.employmentStatus !== 'active') {
+      await logAuthEvent({
+        actorUserId: adminEmployee.empId,
+        actorRole: 'admin',
+        action: adminEmployee.accountStatus === 'locked' ? 'account_locked' : 'account_disabled',
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        metadata: { status: adminEmployee.accountStatus, employmentStatus: adminEmployee.employmentStatus },
+      });
+      return res.status(403).json({ msg: `Account status: ${adminEmployee.accountStatus}. Login blocked.` });
+    }
+
+    const passwordOk = adminEmployee.passwordHash ? await bcrypt.compare(password, adminEmployee.passwordHash) : false;
+    if (!passwordOk) {
       await logAuthEvent({
         actorUserId: adminUserId,
         actorRole: 'admin',
@@ -61,6 +96,9 @@ exports.login = async (req, res) => {
       role: 'admin',
       metadata: {
         ...metadata,
+        employeeId: adminEmployee.empId,
+        employeeName: adminEmployee.name,
+        employeeEmail: adminEmployee.email,
         operatorName: String(operatorName || 'System Admin').trim(),
       },
       providedSessionId: sessionId,
@@ -69,7 +107,14 @@ exports.login = async (req, res) => {
 
     // JWT token generate
     const token = signSessionJwt({
-      claims: { id: adminUserId, email, role: 'admin', operatorName: String(operatorName || 'System Admin').trim() },
+      claims: {
+        id: adminUserId,
+        empId: adminEmployee.empId,
+        email: adminEmployee.email || '',
+        name: adminEmployee.name,
+        role: 'admin',
+        operatorName: String(operatorName || 'System Admin').trim(),
+      },
       sessionId,
       jti,
       expiresIn: '7d',
@@ -85,6 +130,8 @@ exports.login = async (req, res) => {
       metadata: {
         deviceHash: metadata.deviceHash,
         deviceLabel: metadata.deviceLabel,
+        employeeId: adminEmployee.empId,
+        employeeName: adminEmployee.name,
         operatorName: String(operatorName || 'System Admin').trim(),
       },
     });
@@ -102,6 +149,8 @@ exports.login = async (req, res) => {
         deviceHash: metadata.deviceHash,
         loginAt: new Date().toISOString(),
         metadata: {
+          employeeId: adminEmployee.empId,
+          employeeName: adminEmployee.name,
           operatorName: String(operatorName || 'System Admin').trim(),
         }
       });
@@ -122,6 +171,34 @@ exports.login = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// Get system settings (admin)
+exports.getSystemSettings = async (req, res) => {
+  try {
+    const keys = ['alerts.email'];
+    const result = {};
+    for (const key of keys) {
+      result[key] = await SystemSetting.get(key);
+    }
+    res.json({ ok: true, settings: result });
+  } catch (err) {
+    console.error('getSystemSettings error:', err);
+    res.status(500).json({ ok: false, msg: 'Failed to load settings.' });
+  }
+};
+
+// Set a system setting (admin)
+exports.setSystemSetting = async (req, res) => {
+  try {
+    const { key, value } = req.body || {};
+    if (!key) return res.status(400).json({ ok: false, msg: 'key required' });
+    const updated = await SystemSetting.set(String(key), value);
+    res.json({ ok: true, key, value: updated });
+  } catch (err) {
+    console.error('setSystemSetting error:', err);
+    res.status(500).json({ ok: false, msg: 'Failed to save setting.' });
   }
 };
 
