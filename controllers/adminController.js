@@ -43,13 +43,10 @@ exports.login = async (req, res) => {
       return res.status(403).json({ msg: 'Access restriction active. Connection suspended.' });
     }
     if (!normalizedEmpId || !password) {
-      return res.status(400).json({ msg: 'empId and password are required' });
+      return res.status(400).json({ msg: 'adminId and password are required' });
     }
 
-    let adminEmployee = await Employee.findOne({ empId: normalizedEmpId });
-    if (!adminEmployee && normalizedEmpId.includes('@')) {
-      adminEmployee = await Employee.findOne({ email: normalizedEmpId.toLowerCase() });
-    }
+    const adminEmployee = await Employee.findOne({ empId: normalizedEmpId });
 
     const adminUserId = `admin:${normalizedEmpId || 'unknown'}`;
 
@@ -62,7 +59,20 @@ exports.login = async (req, res) => {
         userAgent: metadata.userAgent,
         metadata: { reason: 'admin_employee_not_found' },
       });
-      return res.status(404).json({ msg: 'Admin employee not found' });
+      return res.status(404).json({ msg: 'Admin not found' });
+    }
+
+    // Only employees with adminAccess: true can log into the admin panel
+    if (!adminEmployee.adminAccess) {
+      await logAuthEvent({
+        actorUserId: adminEmployee.empId,
+        actorRole: 'admin',
+        action: 'login_failed',
+        ipAddress: metadata.ipAddress,
+        userAgent: metadata.userAgent,
+        metadata: { reason: 'admin_access_denied' },
+      });
+      return res.status(403).json({ msg: 'Access denied. Admin privileges required.' });
     }
 
     if (adminEmployee.accountStatus !== 'active' || adminEmployee.employmentStatus !== 'active') {

@@ -3,10 +3,13 @@ const Ambassador = require('../models/Ambassador')
 const AmbassadorReferral = require('../models/AmbassadorReferral')
 const AmbassadorActivity = require('../models/AmbassadorActivity')
 const sendEmail = require('../utils/sendEmail')
+const xpService = require('../services/ambassadorXpService')
 
-// Simple referral code generator (scalable: replace with proper sequence/slug if needed)
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 const generateReferralCode = async () => {
-  // Keep it deterministic enough for MVP
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
   const digits = '23456789'
   const rand = () => Math.random().toString(36).slice(2, 6).toUpperCase()
@@ -14,6 +17,10 @@ const generateReferralCode = async () => {
   const part2 = digits[Math.floor(Math.random() * digits.length)] + digits[Math.floor(Math.random() * digits.length)]
   return `TMH-${part1}${part2}-${rand()}`
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/ambassadors/applications
+// ---------------------------------------------------------------------------
 
 exports.listAmbassadorApplications = async (req, res) => {
   try {
@@ -29,6 +36,10 @@ exports.listAmbassadorApplications = async (req, res) => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/admin/ambassadors/approve
+// ---------------------------------------------------------------------------
+
 exports.approveAmbassadorApplication = async (req, res) => {
   try {
     const applicationId = String(req.body?.applicationId || '').trim()
@@ -38,8 +49,12 @@ exports.approveAmbassadorApplication = async (req, res) => {
     if (!application) return res.status(404).json({ msg: 'Application not found.' })
     if (application.status !== 'pending') return res.status(400).json({ msg: 'Application is not pending.' })
 
-    // Create/ensure Ambassador record
-    // Use instagramId + mobileNumber uniqueness constraints from model
+    // ── 1. Ensure level definitions exist ────────────────────────────────────
+    await xpService.ensureLevelsSeeded()
+
+    // ── 2. Create Ambassador record ──────────────────────────────────────────
+    // points starts at 0 here; welcome bonus is applied immediately below via
+    // the idempotent awardWelcomeBonus() — this keeps creation atomic.
     const ambassador = await Ambassador.create({
       applicationId: application._id,
       fullName: application.fullName,
@@ -54,9 +69,10 @@ exports.approveAmbassadorApplication = async (req, res) => {
       approved: true,
       points: 0,
       badges: [],
+      welcomeBonusAwarded: false,
       createdByAdmin: req.admin?.email || '',
     }).catch(async (e) => {
-      // If Ambassador already exists, fetch it (handle duplicate approval gracefully)
+      // Duplicate approval guard: ambassador may already exist
       const existing = await Ambassador.findOne({
         $or: [{ instagramId: application.instagramId }, { mobileNumber: application.mobileNumber }],
       })
@@ -64,8 +80,9 @@ exports.approveAmbassadorApplication = async (req, res) => {
       return existing
     })
 
+    // ── 3. Generate & persist referral code ──────────────────────────────────
     const referralCode = ambassador.referralCode || (await generateReferralCode())
-    // Create referral row if missing
+
     await AmbassadorReferral.findOneAndUpdate(
       { ambassadorId: ambassador._id },
       {
@@ -79,45 +96,73 @@ exports.approveAmbassadorApplication = async (req, res) => {
       { upsert: true, returnDocument: 'after' }
     )
 
-    // Update Ambassador points/referralCode if model supports it
-    // (MVP: referralCode lives on AmbassadorReferral; keep ambassador field for convenience)
-    ambassador.referralCode = referralCode
-    await ambassador.save().catch(() => {})
+    // Persist referral code onto the Ambassador document
+    await Ambassador.updateOne(
+      { _id: ambassador._id },
+      { $set: { referralCode } }
+    )
 
+    // ── 4. Award the welcome bonus (idempotent — safe to retry) ──────────────
+    const bonusResult = await xpService.awardWelcomeBonus(ambassador._id)
+    console.log(`[Ambassador Approval] Welcome bonus for ${ambassador.fullName}: awarded=${bonusResult.awarded}, totalXP=${bonusResult.totalPoints}`)
+
+    // ── 5. Mark application as approved ──────────────────────────────────────
     application.status = 'approved'
     application.reviewedByAdmin = req.admin?.email || ''
     application.reviewedAt = new Date()
     await application.save()
 
-    await AmbassadorActivity.create({
-      ambassadorId: ambassador._id,
-      title: 'Ambassador approved',
-      type: 'application_approved',
-      points: 20,
-      pointsAwarded: true,
-      referralCode: referralCode,
-      instagramId: application.instagramId,
-      mobileNumber: application.mobileNumber,
-    })
+    // ── 6. Credit referring ambassador XP (if this applicant was referred) ───
+    if (application.referredByCode) {
+      try {
+        const referringReferral = await AmbassadorReferral.findOne({ referralCode: application.referredByCode })
+        if (referringReferral) {
+          // Use awardXp with an idempotency key = referralCode + newAmbassadorId
+          const iKey = `referral_approval_${application.referredByCode}_${String(ambassador._id)}`
+          const refResult = await xpService.awardXp({
+            ambassadorId: referringReferral.ambassadorId,
+            title: `Referred ambassador approved: ${application.fullName}`,
+            type: 'referral_join',
+            xp: 30,
+            referralCode: application.referredByCode,
+            mobileNumber: application.mobileNumber,
+            instagramId: application.instagramId,
+            idempotencyKey: iKey,
+          })
 
-    // Send beautiful acceptance letter email to the approved student
+          if (refResult.awarded) {
+            await AmbassadorReferral.updateOne(
+              { referralCode: application.referredByCode },
+              { $inc: { referralCount: 1 } }
+            )
+          }
+        }
+      } catch (refErr) {
+        console.error('Failed to credit referral XP to referring ambassador:', refErr)
+      }
+    }
+
+    // ── 7. Send acceptance email ─────────────────────────────────────────────
     try {
+      const finalAmbassador = await Ambassador.findById(ambassador._id)
+      const finalXp = finalAmbassador?.points ?? bonusResult.totalPoints
+
       const congratsHtml = `
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: auto; padding: 30px; border: 1px solid #D4AF37; border-radius: 16px; background-color: #0c0c0c; color: #ffffff; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.9);">
           <div style="text-align: center; margin-bottom: 25px;">
             <span style="font-size: 40px;">🏆</span>
-            <h1 style="color: #D4AF37; margin: 10px 0 5px 0; font-size: 24px; font-weight: 800; tracking-wide: 1px; text-transform: uppercase;">
+            <h1 style="color: #D4AF37; margin: 10px 0 5px 0; font-size: 24px; font-weight: 800; text-transform: uppercase;">
               OFFICIAL ACCEPTANCE LETTER
             </h1>
             <p style="color: #00E5FF; font-size: 13px; font-weight: bold; margin: 0; text-transform: uppercase; letter-spacing: 2px;">
               TechMNHub Student Ambassador Program
             </p>
           </div>
-          
+
           <p style="font-size: 15px; line-height: 1.6; color: #dddddd;">
             Dear <strong>${application.fullName}</strong>,
           </p>
-          
+
           <p style="font-size: 14px; line-height: 1.6; color: #cccccc; text-align: justify;">
             On behalf of the admissions and leadership committee at <strong>TechMNHub</strong>, we are absolutely thrilled to inform you that your application has been officially <strong>APPROVED</strong>! Welcome to the premium elite circle of <strong>TechMNHub Student Ambassadors</strong>.
           </p>
@@ -132,11 +177,17 @@ exports.approveAmbassadorApplication = async (req, res) => {
             <span style="font-size: 11px; color: #00E5FF; display: block; margin-top: 6px; font-weight: 700;">Use this code to invite peers and log into your console</span>
           </div>
 
+          <div style="background: rgba(0, 229, 255, 0.06); border: 1px solid rgba(0, 229, 255, 0.2); border-radius: 10px; padding: 16px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 11px; font-weight: 900; color: #A0A0A0; text-transform: uppercase; letter-spacing: 2px; display: block; margin-bottom: 4px;">🎉 Welcome Bonus Credited</span>
+            <span style="font-size: 20px; font-weight: 900; color: #00E5FF; display: block;">+${xpService.WELCOME_BONUS_XP} XP</span>
+            <span style="font-size: 11px; color: #808080; display: block; margin-top: 4px;">Your XP Balance: ${finalXp} / 50 (Starter Rank)</span>
+          </div>
+
           <h3 style="color: #D4AF37; font-size: 16px; border-bottom: 1px solid #222; padding-bottom: 8px; margin-top: 30px;">🚀 Next Steps To Activate Your Workspace</h3>
           <ol style="font-size: 13px; line-height: 1.7; color: #cccccc; padding-left: 20px;">
             <li style="margin-bottom: 8px;"><strong>Access Your Terminal</strong>: Navigate to the <a href="https://www.techmnhub.com/ambassador/dashboard" style="color: #00E5FF; text-decoration: none; font-weight: bold;">Ambassador Console 💻</a> and enter your Unique Referral Code (Key) above.</li>
             <li style="margin-bottom: 8px;"><strong>Share Your Code</strong>: Encourage classmate registrations. Each validated sign-up instantly grants you +30 XP points on your live leaderboard.</li>
-            <li style="margin-bottom: 8px;"><strong>Unlock Visual merit Credentials</strong>: Boost your XP balance to dynamically earn the <strong>Growth Hacker</strong> and <strong>Future Leader</strong> digital badges!</li>
+            <li style="margin-bottom: 8px;"><strong>Unlock Visual Merit Credentials</strong>: Boost your XP balance to dynamically earn the <strong>Growth Hacker</strong> and <strong>Future Leader</strong> digital badges!</li>
           </ol>
 
           <p style="font-size: 14px; line-height: 1.6; color: #cccccc; margin-top: 30px;">
@@ -168,6 +219,10 @@ exports.approveAmbassadorApplication = async (req, res) => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/admin/ambassadors/reject
+// ---------------------------------------------------------------------------
+
 exports.rejectAmbassadorApplication = async (req, res) => {
   try {
     const applicationId = String(req.body?.applicationId || '').trim()
@@ -188,6 +243,10 @@ exports.rejectAmbassadorApplication = async (req, res) => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/admin/ambassadors/active
+// ---------------------------------------------------------------------------
+
 exports.listActiveAmbassadors = async (req, res) => {
   try {
     const items = await Ambassador.find({ approved: true })
@@ -200,6 +259,10 @@ exports.listActiveAmbassadors = async (req, res) => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// DELETE /api/admin/ambassadors/:id/terminate
+// ---------------------------------------------------------------------------
+
 exports.terminateAmbassador = async (req, res) => {
   try {
     const { id } = req.params
@@ -208,10 +271,8 @@ exports.terminateAmbassador = async (req, res) => {
     const ambassador = await Ambassador.findById(id)
     if (!ambassador) return res.status(404).json({ msg: 'Ambassador not found.' })
 
-    // Delete active ambassador document
     await Ambassador.findByIdAndDelete(id)
 
-    // Revert the application status back to rejected
     if (ambassador.applicationId) {
       await AmbassadorApplication.findByIdAndUpdate(ambassador.applicationId, {
         status: 'rejected',
@@ -226,5 +287,3 @@ exports.terminateAmbassador = async (req, res) => {
     res.status(500).json({ msg: 'Server error while terminating ambassador.' })
   }
 }
-
-

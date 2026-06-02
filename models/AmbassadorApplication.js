@@ -17,6 +17,9 @@ const ambassadorApplicationSchema = new mongoose.Schema(
     photo: { type: String, default: '' },
     avatar: { type: String, default: '' },
 
+    // Referral tracking: which ambassador's code was used when this person applied
+    referredByCode: { type: String, default: '', trim: true, index: true },
+
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],

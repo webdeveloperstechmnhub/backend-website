@@ -22,6 +22,9 @@ const ambassadorSchema = new mongoose.Schema(
     photo: { type: String, default: '' },
     avatar: { type: String, default: '' },
 
+    // Idempotency flag: set to true once the one-time welcome bonus is credited
+    welcomeBonusAwarded: { type: Boolean, default: false, index: true },
+
     createdByAdmin: { type: String, default: '' },
   },
   { timestamps: true }

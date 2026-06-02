@@ -16,6 +16,7 @@ const accountRoutes = require("./routes/accountRoutes");
 const siteRoutes = require("./routes/siteRoutes");
 const studentSignupRoutes = require("./routes/studentSignupRoutes");
 const { ensureSeedEventsIfEmpty } = require("./controllers/eventController");
+const seedAdminIfMissing = require("./utils/seedAdmin");
 const sessionRoutes = require("./routes/sessionRoutes");
 const employeeAuthRoutes = require("./routes/employeeAuthRoutes");
 const ambassadorRoutes = require("./routes/ambassadorRoutes");
@@ -80,6 +81,11 @@ mongoose
       console.log("✅ Seed events verified");
     } catch (err) {
       console.error("❌ Seed event verification failed:", err);
+    }
+    try {
+      await seedAdminIfMissing();
+    } catch (err) {
+      console.error("❌ Admin seed failed:", err);
     }
   })
   .catch((err) => {

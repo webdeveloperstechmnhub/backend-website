@@ -13,6 +13,9 @@ const ambassadorActivitySchema = new mongoose.Schema(
     referralCode: { type: String, default: '', index: true },
     instagramId: { type: String, default: '', index: true },
     mobileNumber: { type: String, default: '', index: true },
+
+    // Optional unique key to prevent duplicate activity records for the same event
+    idempotencyKey: { type: String, default: '', index: true },
   },
   { timestamps: true }
 )

@@ -3,14 +3,17 @@ const Ambassador = require('../models/Ambassador')
 const AmbassadorReferral = require('../models/AmbassadorReferral')
 const AmbassadorActivity = require('../models/AmbassadorActivity')
 const AmbassadorReward = require('../models/AmbassadorReward')
-const AmbassadorLevel = require('../models/AmbassadorLevel')
 const AmbassadorSchool = require('../models/AmbassadorSchool')
 const sendEmail = require('../utils/sendEmail')
+const xpService = require('../services/ambassadorXpService')
 
 // Helpers
 const normalizeInstagram = (v) => String(v || '').trim().replace(/^@/, '')
 
+// ---------------------------------------------------------------------------
 // POST /api/ambassador/apply
+// ---------------------------------------------------------------------------
+
 exports.applyAmbassador = async (req, res) => {
   try {
     const fullName = String(req.body?.fullName || '').trim()
@@ -23,6 +26,7 @@ exports.applyAmbassador = async (req, res) => {
     const email = String(req.body?.email || '').trim().toLowerCase()
     const why = String(req.body?.why || '').trim()
     const skills = String(req.body?.skills || '').trim()
+    const referredByCode = String(req.body?.referredByCode || '').trim().toUpperCase()
 
     if (!fullName || !schoolName || !className || !city || !mobileNumber || !parentNumber || !instagramId || !email || !why || !skills) {
       return res.status(400).json({ msg: 'Please fill all required fields.' })
@@ -35,11 +39,7 @@ exports.applyAmbassador = async (req, res) => {
     if (skills.length < 10) return res.status(400).json({ msg: 'Skills/Interests (min 10 chars)' })
 
     const existing = await AmbassadorApplication.findOne({
-      $or: [
-        { mobileNumber },
-        { instagramId },
-        { email },
-      ],
+      $or: [{ mobileNumber }, { instagramId }, { email }],
       status: { $in: ['pending', 'approved'] },
     })
 
@@ -52,19 +52,20 @@ exports.applyAmbassador = async (req, res) => {
       school = await AmbassadorSchool.create({ name: schoolName, city })
     }
 
-    const existingRewardLevels = await AmbassadorLevel.find({}).sort({ pointsNeeded: 1 })
-    if (!existingRewardLevels.length) {
-      // Bootstrap default levels once
-      await AmbassadorLevel.create([
-        { levelNumber: 1, name: 'Starter', pointsNeeded: 50 },
-        { levelNumber: 2, name: 'Rising Ambassador', pointsNeeded: 150 },
-        { levelNumber: 3, name: 'Elite Ambassador', pointsNeeded: 300 },
-        { levelNumber: 4, name: 'Future Leader', pointsNeeded: 500 },
-      ])
-    }
+    // Ensure level definitions exist (idempotent)
+    await xpService.ensureLevelsSeeded()
 
     const photo = String(req.body?.photo || '').trim()
     const avatar = String(req.body?.avatar || '').trim()
+
+    // Validate referral code if provided
+    let validatedReferredByCode = ''
+    if (referredByCode) {
+      const refRecord = await AmbassadorReferral.findOne({ referralCode: referredByCode })
+      if (refRecord) {
+        validatedReferredByCode = referredByCode
+      }
+    }
 
     const application = await AmbassadorApplication.create({
       fullName,
@@ -79,10 +80,11 @@ exports.applyAmbassador = async (req, res) => {
       skills,
       photo,
       avatar,
+      referredByCode: validatedReferredByCode,
       status: 'pending',
     })
 
-    // Dispatch beautiful HTML notification email to core support team
+    // Dispatch notification email to core support team
     try {
       const emailHtml = `
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: auto; padding: 25px; border: 1px solid #D4AF37; border-radius: 12px; background-color: #0c0c0c; color: #ffffff;">
@@ -92,61 +94,33 @@ exports.applyAmbassador = async (req, res) => {
           <p style="font-size: 15px; line-height: 1.6; color: #cccccc; text-align: center;">
             A student has submitted an application to join the <strong>TechMNHub Student Ambassador Program</strong>. Below are their registration details:
           </p>
-          
           <table style="width: 100%; border-collapse: collapse; margin: 25px 0; background-color: #121212; border-radius: 8px; overflow: hidden;">
-            <tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37; width: 35%;">Full Name:</td>
-              <td style="padding: 12px; color: #fff;">${fullName}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37;">School Name:</td>
-              <td style="padding: 12px; color: #fff;">${schoolName}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37;">Class/Year:</td>
-              <td style="padding: 12px; color: #fff;">${className}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37;">City:</td>
-              <td style="padding: 12px; color: #fff;">${city}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37;">Student Email:</td>
-              <td style="padding: 12px; color: #00E5FF;"><a href="mailto:${email}" style="color: #00E5FF; text-decoration: none;">${email}</a></td>
-            </tr>
-            <tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37;">Mobile Number:</td>
-              <td style="padding: 12px; color: #fff;">${mobileNumber}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37;">Parent Number:</td>
-              <td style="padding: 12px; color: #fff;">${parentNumber}</td>
-            </tr>
-            <tr>
-              <td style="padding: 12px; font-weight: bold; color: #D4AF37;">Instagram ID:</td>
-              <td style="padding: 12px; color: #fff;"><a href="https://instagram.com/${instagramId}" style="color: #D4AF37; text-decoration: none;">@${instagramId}</a></td>
-            </tr>
+            <tr style="border-bottom: 1px solid #222;"><td style="padding: 12px; font-weight: bold; color: #D4AF37; width: 35%;">Full Name:</td><td style="padding: 12px; color: #fff;">${fullName}</td></tr>
+            <tr style="border-bottom: 1px solid #222;"><td style="padding: 12px; font-weight: bold; color: #D4AF37;">School Name:</td><td style="padding: 12px; color: #fff;">${schoolName}</td></tr>
+            <tr style="border-bottom: 1px solid #222;"><td style="padding: 12px; font-weight: bold; color: #D4AF37;">Class/Year:</td><td style="padding: 12px; color: #fff;">${className}</td></tr>
+            <tr style="border-bottom: 1px solid #222;"><td style="padding: 12px; font-weight: bold; color: #D4AF37;">City:</td><td style="padding: 12px; color: #fff;">${city}</td></tr>
+            <tr style="border-bottom: 1px solid #222;"><td style="padding: 12px; font-weight: bold; color: #D4AF37;">Student Email:</td><td style="padding: 12px; color: #00E5FF;"><a href="mailto:${email}" style="color: #00E5FF; text-decoration: none;">${email}</a></td></tr>
+            <tr style="border-bottom: 1px solid #222;"><td style="padding: 12px; font-weight: bold; color: #D4AF37;">Mobile Number:</td><td style="padding: 12px; color: #fff;">${mobileNumber}</td></tr>
+            <tr style="border-bottom: 1px solid #222;"><td style="padding: 12px; font-weight: bold; color: #D4AF37;">Parent Number:</td><td style="padding: 12px; color: #fff;">${parentNumber}</td></tr>
+            <tr><td style="padding: 12px; font-weight: bold; color: #D4AF37;">Instagram ID:</td><td style="padding: 12px; color: #fff;"><a href="https://instagram.com/${instagramId}" style="color: #D4AF37; text-decoration: none;">@${instagramId}</a></td></tr>
           </table>
-
           <div style="background-color: #121212; padding: 18px; border-left: 4px solid #D4AF37; border-radius: 4px; margin-bottom: 20px;">
             <h4 style="margin: 0 0 8px 0; color: #D4AF37; font-size: 14px; text-transform: uppercase;">Why do you want to join?</h4>
             <p style="margin: 0; font-style: italic; color: #dddddd; font-size: 14px; line-height: 1.6;">"${why}"</p>
           </div>
-
           <div style="background-color: #121212; padding: 18px; border-left: 4px solid #00E5FF; border-radius: 4px; margin-bottom: 25px;">
             <h4 style="margin: 0 0 8px 0; color: #00E5FF; font-size: 14px; text-transform: uppercase;">Skills & Interests:</h4>
             <p style="margin: 0; color: #dddddd; font-size: 14px; line-height: 1.6;">${skills}</p>
           </div>
-
+          ${validatedReferredByCode ? `<p style="font-size: 12px; color: #D4AF37; text-align: center;">🔗 Referred by ambassador: <strong>${validatedReferredByCode}</strong></p>` : ''}
           <div style="text-align: center; margin-top: 30px;">
-            <a href="${process.env.VITE_API_URL ? process.env.VITE_API_URL.replace('/api', '') : 'http://localhost:5173'}/admin" 
-               style="background: linear-gradient(135deg, #D4AF37 0%, #F0DB92 100%); color: #000000; padding: 14px 28px; text-decoration: none; font-weight: bold; border-radius: 6px; box-shadow: 0 0 15px rgba(212, 175, 55, 0.4); display: inline-block; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+            <a href="${process.env.VITE_API_URL ? process.env.VITE_API_URL.replace('/api', '') : 'http://localhost:5173'}/admin"
+               style="background: linear-gradient(135deg, #D4AF37 0%, #F0DB92 100%); color: #000000; padding: 14px 28px; text-decoration: none; font-weight: bold; border-radius: 6px; display: inline-block; font-size: 14px; text-transform: uppercase;">
               Review in Admin Panel
             </a>
           </div>
-          
           <p style="font-size: 11px; color: #666666; text-align: center; margin-top: 35px; border-top: 1px solid #222; padding-top: 15px; margin-bottom: 0;">
-            This is an automated notification sent secure from the TechMNHub Portal.
+            This is an automated notification sent from the TechMNHub Portal.
           </p>
         </div>
       `
@@ -166,13 +140,14 @@ exports.applyAmbassador = async (req, res) => {
   }
 }
 
+// ---------------------------------------------------------------------------
 // GET /api/ambassador/leaderboard?category=...
+// ---------------------------------------------------------------------------
+
 exports.getAmbassadorLeaderboard = async (req, res) => {
   try {
     const category = String(req.query?.category || 'top_ambassadors').trim()
 
-    // For MVP: compute from Ambassador points.
-    // Later we can extend to weekly creators/schools.
     const ambassadors = await Ambassador.find({ approved: true })
       .populate('schoolId', 'name')
       .sort({ points: -1 })
@@ -187,35 +162,21 @@ exports.getAmbassadorLeaderboard = async (req, res) => {
       badges: a.badges || [],
     }))
 
-    // category variations (basic)
     if (category === 'top_schools') {
       const schoolAgg = new Map()
       for (const row of ranked) {
         const key = row.schoolName || 'Unknown'
-        const prev = schoolAgg.get(key) || { schoolName: key, points: 0, rankPoints: 0 }
+        const prev = schoolAgg.get(key) || { schoolName: key, points: 0 }
         prev.points += row.points
         schoolAgg.set(key, prev)
       }
       ranked = Array.from(schoolAgg.values())
         .sort((a, b) => b.points - a.points)
         .slice(0, 30)
-        .map((x, idx) => ({
-          rank: idx + 1,
-          id: `${x.schoolName}-${idx}`,
-          name: x.schoolName,
-          schoolName: x.schoolName,
-          points: x.points,
-          badges: [],
-        }))
+        .map((x, idx) => ({ rank: idx + 1, id: `${x.schoolName}-${idx}`, name: x.schoolName, schoolName: x.schoolName, points: x.points, badges: [] }))
     }
 
-    if (category === 'weekly_leaders') {
-      // MVP: same as top_ambassadors
-      ranked = ranked.slice(0, 50)
-    }
-
-    if (category === 'top_creators') {
-      // MVP: same as top_ambassadors
+    if (category === 'weekly_leaders' || category === 'top_creators') {
       ranked = ranked.slice(0, 50)
     }
 
@@ -226,60 +187,79 @@ exports.getAmbassadorLeaderboard = async (req, res) => {
   }
 }
 
+// ---------------------------------------------------------------------------
 // GET /api/ambassador/dashboard
+// ---------------------------------------------------------------------------
+
 exports.getAmbassadorDashboard = async (req, res) => {
   try {
     const referralCode = String(req.query?.code || req.query?.referralCode || req.headers['x-ambassador-code'] || '').trim().toUpperCase()
     const sessionEmail = String(req.studentUser?.email || '').trim().toLowerCase()
     const email = sessionEmail || String(req.query?.email || '').trim().toLowerCase()
 
-    let ambassador = null
+    // No credentials → return a safe demo/preview payload (no 401)
+    if (!referralCode && !email) {
+      return res.json({
+        totalPoints: 0,
+        level: { name: 'Starter', pointsNeeded: 0, nextName: 'Rising Ambassador', nextPoints: 50 },
+        referralCount: 0,
+        referralCode: 'TMH-DEMO-XXXX',
+        referralLink: '',
+        rewardsUnlocked: 0,
+        leaderboardRank: 0,
+        badges: [],
+        recentActivities: [],
+        upcomingEvents: [],
+        isDemo: true,
+      })
+    }
 
+    let ambassador = null
     if (referralCode) {
       ambassador = await Ambassador.findOne({ referralCode, approved: true }).populate('schoolId', 'name')
     } else if (email) {
       ambassador = await Ambassador.findOne({ email, approved: true }).populate('schoolId', 'name')
     }
 
-    // If they explicitly tried to log in but the ambassador record was not found
-    if ((referralCode || email) && !ambassador) {
+    if (!ambassador) {
       return res.status(404).json({ msg: 'No approved ambassador found with this unique referral code.' })
     }
 
-    if (!referralCode && !email) {
-      return res.status(401).json({ msg: 'Login required to load ambassador dashboard.' })
-    }
+    // ── Resolve current level and next level using XP service ────────────────
+    await xpService.ensureLevelsSeeded()
+    const currentLevel = await xpService.resolveLevel(ambassador.points)
+    const nextLevel = await xpService.resolveNextLevel(currentLevel)
 
-    if (!ambassador) {
-      return res.status(404).json({ msg: 'No approved ambassador profile found for this account.' })
-    }
-
-    const levels = await AmbassadorLevel.find({}).sort({ pointsNeeded: 1 })
-    const currentLevel = levels
-      .filter((l) => ambassador.points >= l.pointsNeeded)
-      .sort((a, b) => b.pointsNeeded - a.pointsNeeded)[0] || levels[0]
-
+    // ── Referral data ─────────────────────────────────────────────────────────
     const referral = await AmbassadorReferral.findOne({ ambassadorId: ambassador._id })
 
+    // ── Recent activities ─────────────────────────────────────────────────────
     const recentActivities = await AmbassadorActivity.find({ ambassadorId: ambassador._id })
       .sort({ createdAt: -1 })
       .limit(8)
 
+    // ── Rewards unlocked ──────────────────────────────────────────────────────
     const allRewards = await AmbassadorReward.find({ levelNumber: { $lte: currentLevel.levelNumber } })
 
-    // Rank
-    const all = await Ambassador.find({ approved: true }).sort({ points: -1 })
+    // ── Leaderboard rank ──────────────────────────────────────────────────────
+    const all = await Ambassador.find({ approved: true }).sort({ points: -1 }).select('_id')
     const leaderboardRank = all.findIndex((x) => String(x._id) === String(ambassador._id)) + 1
 
     return res.json({
       totalPoints: ambassador.points,
-      level: { name: currentLevel?.name || 'Starter', points: currentLevel?.pointsNeeded || 50 },
+      level: {
+        name: currentLevel.name,
+        pointsNeeded: currentLevel.pointsNeeded,
+        nextName: nextLevel?.name || null,
+        nextPoints: nextLevel?.pointsNeeded ?? null,
+      },
       referralCount: referral?.referralCount || 0,
       referralCode: referral?.referralCode || ambassador.referralCode || '',
       referralLink: referral?.referralLink || '',
       rewardsUnlocked: allRewards.length,
       leaderboardRank: leaderboardRank || 1,
       badges: ambassador.badges || [],
+      welcomeBonusAwarded: ambassador.welcomeBonusAwarded,
       recentActivities: recentActivities.map((a) => ({
         title: a.title,
         type: a.type,
@@ -294,10 +274,12 @@ exports.getAmbassadorDashboard = async (req, res) => {
   }
 }
 
+// ---------------------------------------------------------------------------
 // POST /api/ambassador/referrals/track
+// ---------------------------------------------------------------------------
+
 exports.trackReferral = async (req, res) => {
   try {
-    // MVP: accept referralCode and create a tracking record.
     const referralCode = String(req.body?.referralCode || '').trim()
     const referredMobile = String(req.body?.referredMobileNumber || '').trim()
     const referredInstagramId = normalizeInstagram(req.body?.referredInstagramId)
@@ -307,33 +289,33 @@ exports.trackReferral = async (req, res) => {
     const referral = await AmbassadorReferral.findOne({ referralCode })
     if (!referral) return res.status(404).json({ msg: 'Referral code not found.' })
 
-    const already = await AmbassadorActivity.findOne({
-      referralCode,
-      type: 'referral_join',
-      $or: [{ mobileNumber: referredMobile }, { instagramId: referredInstagramId }],
-    })
+    // Build an idempotency key from whatever identifier we have
+    const iKey = `referral_track_${referralCode}_${referredMobile || referredInstagramId}`
 
-    if (already) return res.status(200).json({ msg: 'Referral already tracked.' })
-
-    await AmbassadorReferral.updateOne({
-      $inc: { referralCount: 1 },
-    })
-
-    const activity = await AmbassadorActivity.create({
+    const result = await xpService.awardXp({
       ambassadorId: referral.ambassadorId,
       title: 'Referral joined',
       type: 'referral_join',
+      xp: 30,
       referralCode,
-      mobileNumber: referredMobile || '',
-      instagramId: referredInstagramId || '',
-      points: 30,
-      pointsAwarded: true,
+      mobileNumber: referredMobile,
+      instagramId: referredInstagramId,
+      idempotencyKey: iKey,
     })
 
-    return res.json({ msg: 'Referral tracked successfully.', activity })
+    if (!result.awarded) {
+      return res.status(200).json({ msg: 'Referral already tracked.' })
+    }
+
+    // Increment referral count only if XP was actually awarded
+    await AmbassadorReferral.updateOne(
+      { referralCode },
+      { $inc: { referralCount: 1 } }
+    )
+
+    return res.json({ msg: 'Referral tracked successfully.', xpAwarded: result.xp, totalXp: result.totalPoints })
   } catch (err) {
     console.error('trackReferral error:', err)
     return res.status(500).json({ msg: 'Server error while tracking referral.' })
   }
 }
-
