@@ -30,6 +30,7 @@ exports.login = async (req, res) => {
     const normalizedEmpId = String(empId || '').trim();
 
     const TelemetryFilter = require('../models/TelemetryFilter');
+    const AuthAuditLog = require('../models/AuthAuditLog');
     const clientIp = metadata.ipAddress || req.ip || '';
     const isBanned = await TelemetryFilter.findOne({
       active: true,
@@ -46,83 +47,117 @@ exports.login = async (req, res) => {
       return res.status(400).json({ msg: 'adminId and password are required' });
     }
 
-    const adminEmployee = await Employee.findOne({ empId: normalizedEmpId });
-
+    const isSuperAdmin = (normalizedEmpId === String(process.env.ADMIN_ID || '').trim());
+    let adminEmployee;
+    let passwordOk = false;
+    let role = 'admin';
+    let permissions = [];
     const adminUserId = `admin:${normalizedEmpId || 'unknown'}`;
 
-    if (!adminEmployee) {
+    const handleFailedLogin = async (actorUserId, reason) => {
       await logAuthEvent({
-        actorUserId: adminUserId,
-        actorRole: 'admin',
+        actorUserId,
+        actorRole: isSuperAdmin ? 'admin' : 'employee',
         action: 'login_failed',
         ipAddress: metadata.ipAddress,
         userAgent: metadata.userAgent,
-        metadata: { reason: 'admin_employee_not_found' },
+        metadata: { reason },
       });
-      return res.status(404).json({ msg: 'Admin not found' });
-    }
 
-    // Only employees with adminAccess: true can log into the admin panel
-    if (!adminEmployee.adminAccess) {
-      await logAuthEvent({
-        actorUserId: adminEmployee.empId,
-        actorRole: 'admin',
+      const since = new Date(Date.now() - 15 * 60 * 1000);
+      const failedCount = await AuthAuditLog.countDocuments({
+        actorUserId,
         action: 'login_failed',
-        ipAddress: metadata.ipAddress,
-        userAgent: metadata.userAgent,
-        metadata: { reason: 'admin_access_denied' },
+        createdAt: { $gte: since }
       });
-      return res.status(403).json({ msg: 'Access denied. Admin privileges required.' });
-    }
 
-    if (adminEmployee.accountStatus !== 'active' || adminEmployee.employmentStatus !== 'active') {
-      await logAuthEvent({
-        actorUserId: adminEmployee.empId,
-        actorRole: 'admin',
-        action: adminEmployee.accountStatus === 'locked' ? 'account_locked' : 'account_disabled',
-        ipAddress: metadata.ipAddress,
-        userAgent: metadata.userAgent,
-        metadata: { status: adminEmployee.accountStatus, employmentStatus: adminEmployee.employmentStatus },
-      });
-      return res.status(403).json({ msg: `Account status: ${adminEmployee.accountStatus}. Login blocked.` });
-    }
+      if (failedCount >= 3) {
+        try {
+          const recipient = (await SystemSetting.get('alerts.email')) || process.env.EMAIL;
+          const emailBody = `
+            <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
+              <h2>Security Alert: Multiple Failed Login Attempts</h2>
+              <p><strong>User ID Entered:</strong> ${normalizedEmpId}</p>
+              <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
+              <p><strong>IP Address:</strong> ${metadata.ipAddress || req.ip || 'Unknown'}</p>
+              <p><strong>User Agent:</strong> ${metadata.userAgent || 'Unknown'}</p>
+              <p><strong>Platform:</strong> ${metadata.platform || 'Unknown'}</p>
+              <p><strong>Browser:</strong> ${metadata.browser || 'Unknown'}</p>
+            </div>
+          `;
+          if (recipient) {
+            await sendEmail({
+              to: recipient,
+              subject: `Security Alert: Multiple Failed Login Attempts - ${normalizedEmpId}`,
+              html: emailBody
+            });
+            console.log(`[FailedLoginMonitoring] Security alert email sent to ${recipient}`);
+          }
+        } catch (e) {
+          console.warn('Failed to send security alert email', e.message);
+        }
+      }
+    };
 
-    const passwordOk = adminEmployee.passwordHash ? await bcrypt.compare(password, adminEmployee.passwordHash) : false;
-    if (!passwordOk) {
-      await logAuthEvent({
-        actorUserId: adminUserId,
-        actorRole: 'admin',
-        action: 'login_failed',
-        ipAddress: metadata.ipAddress,
-        userAgent: metadata.userAgent,
-        metadata: { reason: 'invalid_credentials' },
-      });
-      return res.status(401).json({ msg: 'Invalid credentials' });
+    if (isSuperAdmin) {
+      passwordOk = (password === String(process.env.ADMIN_PASS || '').trim());
+      role = 'super_admin';
+      permissions = ['*'];
+      if (!passwordOk) {
+        await handleFailedLogin(adminUserId, 'invalid_credentials');
+        return res.status(401).json({ msg: 'Invalid credentials' });
+      }
+    } else {
+      adminEmployee = await Employee.findOne({ empId: normalizedEmpId });
+
+      if (!adminEmployee) {
+        await handleFailedLogin(adminUserId, 'admin_employee_not_found');
+        return res.status(404).json({ msg: 'Admin not found' });
+      }
+
+      if (!adminEmployee.adminAccess) {
+        await handleFailedLogin(adminUserId, 'admin_access_denied');
+        return res.status(403).json({ msg: 'Access denied. Admin privileges required.' });
+      }
+
+      if (adminEmployee.accountStatus !== 'active' || adminEmployee.employmentStatus !== 'active') {
+        await handleFailedLogin(adminEmployee.empId, 'account_locked_or_disabled');
+        return res.status(403).json({ msg: `Account status: ${adminEmployee.accountStatus}. Login blocked.` });
+      }
+
+      passwordOk = adminEmployee.passwordHash ? await bcrypt.compare(password, adminEmployee.passwordHash) : false;
+      if (!passwordOk) {
+        await handleFailedLogin(adminUserId, 'invalid_credentials');
+        return res.status(401).json({ msg: 'Invalid credentials' });
+      }
+
+      role = adminEmployee.role || 'admin';
+      permissions = adminEmployee.permissions || [];
     }
 
     const { sessionId, jti } = generateSessionIdentifiers();
     const session = await createSessionOwnership({
       userId: adminUserId,
-      role: 'admin',
+      role: role,
       metadata: {
         ...metadata,
-        employeeId: adminEmployee.empId,
-        employeeName: adminEmployee.name,
-        employeeEmail: adminEmployee.email,
+        employeeId: isSuperAdmin ? normalizedEmpId : adminEmployee.empId,
+        employeeName: isSuperAdmin ? 'Super Admin' : adminEmployee.name,
+        employeeEmail: isSuperAdmin ? 'admin@techmnhub.com' : adminEmployee.email,
         operatorName: String(operatorName || 'System Admin').trim(),
       },
       providedSessionId: sessionId,
       providedJti: jti,
     });
 
-    // JWT token generate
     const token = signSessionJwt({
       claims: {
         id: adminUserId,
-        empId: adminEmployee.empId,
-        email: adminEmployee.email || '',
-        name: adminEmployee.name,
-        role: 'admin',
+        empId: isSuperAdmin ? normalizedEmpId : adminEmployee.empId,
+        email: isSuperAdmin ? 'admin@techmnhub.com' : (adminEmployee.email || ''),
+        name: isSuperAdmin ? 'Super Admin' : adminEmployee.name,
+        role: role,
+        permissions: permissions,
         operatorName: String(operatorName || 'System Admin').trim(),
       },
       sessionId,
@@ -132,7 +167,7 @@ exports.login = async (req, res) => {
 
     await logAuthEvent({
       actorUserId: adminUserId,
-      actorRole: 'admin',
+      actorRole: role,
       action: 'login_success',
       targetSessionId: sessionId,
       ipAddress: metadata.ipAddress,
@@ -140,18 +175,17 @@ exports.login = async (req, res) => {
       metadata: {
         deviceHash: metadata.deviceHash,
         deviceLabel: metadata.deviceLabel,
-        employeeId: adminEmployee.empId,
-        employeeName: adminEmployee.name,
+        employeeId: isSuperAdmin ? normalizedEmpId : adminEmployee.empId,
+        employeeName: isSuperAdmin ? 'Super Admin' : adminEmployee.name,
         operatorName: String(operatorName || 'System Admin').trim(),
       },
     });
 
-    // Notify session-manager about the new session (best-effort)
     try {
       const sessionManager = require('../utils/sessionManagerClient');
       sessionManager.createSession({
         userId: adminUserId,
-        role: 'admin',
+        role: role,
         sessionId,
         jti,
         ip: metadata.ipAddress,
@@ -159,8 +193,8 @@ exports.login = async (req, res) => {
         deviceHash: metadata.deviceHash,
         loginAt: new Date().toISOString(),
         metadata: {
-          employeeId: adminEmployee.empId,
-          employeeName: adminEmployee.name,
+          employeeId: isSuperAdmin ? normalizedEmpId : adminEmployee.empId,
+          employeeName: isSuperAdmin ? 'Super Admin' : adminEmployee.name,
           operatorName: String(operatorName || 'System Admin').trim(),
         }
       });
@@ -309,6 +343,305 @@ exports.getStats = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// @desc    Get overall company growth analytics
+exports.getCompanyGrowthAnalytics = async (req, res) => {
+  try {
+    const Ambassador = require('../models/Ambassador');
+    const SessionBooking = require('../models/SessionBooking');
+    const AmbassadorReferral = require('../models/AmbassadorReferral');
+
+    // Aggregate monthly data
+    const usersMonthly = await User.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          count: { $sum: 1 },
+          paidCount: { $sum: { $cond: [{ $eq: ["$paymentStatus", "paid"] }, 1, 0] } },
+          revenue: { $sum: { $cond: [{ $eq: ["$paymentStatus", "paid"] }, "$amountPaid", 0] } }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const studentsMonthly = await StudentSignup.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const ambassadorsMonthly = await Ambassador.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const institutesMonthly = await Institute.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const sessionsMonthly = await SessionBooking.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          count: { $sum: 1 },
+          studentsReached: { $sum: "$students" }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const messagesMonthly = await ContactMessage.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Build unique list of all months involved, default to last 6 months if none
+    const months = [];
+    const date = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(date.getFullYear(), date.getMonth() - i, 1);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      months.push(`${year}-${month}`);
+    }
+
+    const allAggregatedMonths = [
+      ...usersMonthly.map(r => r._id),
+      ...studentsMonthly.map(r => r._id),
+      ...ambassadorsMonthly.map(r => r._id),
+      ...institutesMonthly.map(r => r._id),
+      ...sessionsMonthly.map(r => r._id),
+      ...messagesMonthly.map(r => r._id)
+    ].filter(Boolean);
+
+    let startMonth = months[0];
+    if (allAggregatedMonths.length > 0) {
+      allAggregatedMonths.sort();
+      if (allAggregatedMonths[0] < startMonth) {
+        startMonth = allAggregatedMonths[0];
+      }
+    }
+
+    const endYearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+    // Get previous month string
+    const prevDate = new Date(date.getFullYear(), date.getMonth() - 1, 1);
+    const prevMonthStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+
+    const monthsRange = [];
+    let currentYM = startMonth;
+    while (currentYM <= endYearMonth) {
+      monthsRange.push(currentYM);
+      const [yearStr, monthStr] = currentYM.split('-');
+      let year = parseInt(yearStr);
+      let month = parseInt(monthStr);
+      month += 1;
+      if (month > 12) {
+        month = 1;
+        year += 1;
+      }
+      currentYM = `${year}-${String(month).padStart(2, '0')}`;
+    }
+
+    // Build timeline
+    let cumulativeUsers = 0;
+    let cumulativeRevenue = 0;
+    let cumulativeStudents = 0;
+    let cumulativeAmbassadors = 0;
+    let cumulativeInstitutes = 0;
+    let cumulativeSessions = 0;
+    let cumulativeLeads = 0;
+
+    const timeline = monthsRange.map(month => {
+      const userRec = usersMonthly.find(r => r._id === month) || { count: 0, paidCount: 0, revenue: 0 };
+      const studentRec = studentsMonthly.find(r => r._id === month) || { count: 0 };
+      const ambRec = ambassadorsMonthly.find(r => r._id === month) || { count: 0 };
+      const instRec = institutesMonthly.find(r => r._id === month) || { count: 0 };
+      const sessRec = sessionsMonthly.find(r => r._id === month) || { count: 0, studentsReached: 0 };
+      const msgRec = messagesMonthly.find(r => r._id === month) || { count: 0 };
+
+      cumulativeUsers += userRec.count;
+      cumulativeRevenue += userRec.revenue;
+      cumulativeStudents += studentRec.count;
+      cumulativeAmbassadors += ambRec.count;
+      cumulativeInstitutes += instRec.count;
+      cumulativeSessions += sessRec.count;
+      cumulativeLeads += msgRec.count;
+
+      return {
+        month,
+        newRegistrations: userRec.count,
+        cumulativeRegistrations: cumulativeUsers,
+        newRevenue: userRec.revenue,
+        cumulativeRevenue: cumulativeRevenue,
+        newStudentSignups: studentRec.count,
+        cumulativeStudentSignups: cumulativeStudents,
+        newAmbassadors: ambRec.count,
+        cumulativeAmbassadors: cumulativeAmbassadors,
+        newInstitutes: instRec.count,
+        cumulativeInstitutes: cumulativeInstitutes,
+        newSessions: sessRec.count,
+        cumulativeSessions: cumulativeSessions,
+        studentsReached: sessRec.studentsReached || 0,
+        newLeads: msgRec.count,
+        cumulativeLeads: cumulativeLeads
+      };
+    });
+
+    // Compute absolute metrics
+    const totalUsers = await User.countDocuments();
+    const paidUsers = await User.countDocuments({ paymentStatus: "paid" });
+    const checkedInUsers = await User.countDocuments({ checkedIn: true });
+    const revenueSum = await User.aggregate([
+      { $match: { paymentStatus: "paid" } },
+      { $group: { _id: null, total: { $sum: "$amountPaid" } } }
+    ]);
+    const totalRevenue = revenueSum[0]?.total || 0;
+
+    const totalStudents = await StudentSignup.countDocuments();
+    const approvedStudents = await StudentSignup.countDocuments({ status: "approved" });
+    const pendingStudents = await StudentSignup.countDocuments({ status: "pending" });
+
+    const totalAmbassadors = await Ambassador.countDocuments();
+    const ambPointsSum = await Ambassador.aggregate([
+      { $group: { _id: null, total: { $sum: "$points" } } }
+    ]);
+    const totalAmbassadorPoints = ambPointsSum[0]?.total || 0;
+
+    const referralsSum = await AmbassadorReferral.aggregate([
+      { $group: { _id: null, total: { $sum: "$referralCount" } } }
+    ]);
+    const totalReferrals = referralsSum[0]?.total || 0;
+
+    const totalInstitutes = await Institute.countDocuments();
+    const instituteTypes = await Institute.aggregate([
+      { $group: { _id: "$type", count: { $sum: 1 } } }
+    ]);
+
+    const totalSessions = await SessionBooking.countDocuments();
+    const sessionAudienceSum = await SessionBooking.aggregate([
+      { $match: { status: { $in: ["confirmed", "completed"] } } },
+      { $group: { _id: null, total: { $sum: "$students" } } }
+    ]);
+    const totalAudienceReached = sessionAudienceSum[0]?.total || 0;
+
+    const sessionsStatus = await SessionBooking.aggregate([
+      { $group: { _id: "$status", count: { $sum: 1 } } }
+    ]);
+
+    const totalLeads = await ContactMessage.countDocuments();
+    const leadSources = await ContactMessage.aggregate([
+      { $group: { _id: "$source", count: { $sum: 1 } } }
+    ]);
+
+    // Top colleges by signups
+    const topColleges = await StudentSignup.aggregate([
+      { $group: { _id: "$college", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]);
+
+    // Event category-wise stats (from User paid records)
+    const categoryStats = await User.aggregate([
+      { $match: { paymentStatus: "paid" } },
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    // MoM growth calculations
+    let curMonthData = timeline.find(t => t.month === endYearMonth);
+    let prevMonthData = timeline.find(t => t.month === prevMonthStr);
+
+    if (!curMonthData && timeline.length > 0) {
+      curMonthData = timeline[timeline.length - 1];
+      prevMonthData = timeline.length > 1 ? timeline[timeline.length - 2] : null;
+    }
+
+    const getGrowth = (cur, prev) => {
+      if (!prev) return 0;
+      return Number((((cur - prev) / (prev || 1)) * 100).toFixed(1));
+    };
+
+    const momGrowth = {
+      registrations: getGrowth(curMonthData?.newRegistrations || 0, prevMonthData?.newRegistrations || 0),
+      revenue: getGrowth(curMonthData?.newRevenue || 0, prevMonthData?.newRevenue || 0),
+      studentSignups: getGrowth(curMonthData?.newStudentSignups || 0, prevMonthData?.newStudentSignups || 0),
+      ambassadors: getGrowth(curMonthData?.newAmbassadors || 0, prevMonthData?.newAmbassadors || 0),
+      sessions: getGrowth(curMonthData?.newSessions || 0, prevMonthData?.newSessions || 0),
+      leads: getGrowth(curMonthData?.newLeads || 0, prevMonthData?.newLeads || 0),
+    };
+
+    res.json({
+      kpis: {
+        registrations: {
+          total: totalUsers,
+          paid: paidUsers,
+          checkedIn: checkedInUsers,
+          conversionRate: totalUsers ? Number(((paidUsers / totalUsers) * 100).toFixed(1)) : 0,
+          attendanceRate: paidUsers ? Number(((checkedInUsers / paidUsers) * 100).toFixed(1)) : 0,
+          momGrowth: momGrowth.registrations
+        },
+        revenue: {
+          total: totalRevenue,
+          momGrowth: momGrowth.revenue
+        },
+        students: {
+          total: totalStudents,
+          approved: approvedStudents,
+          pending: pendingStudents,
+          momGrowth: momGrowth.studentSignups
+        },
+        ambassadors: {
+          total: totalAmbassadors,
+          totalPoints: totalAmbassadorPoints,
+          totalReferrals: totalReferrals,
+          momGrowth: momGrowth.ambassadors
+        },
+        sessions: {
+          total: totalSessions,
+          audienceReached: totalAudienceReached,
+          momGrowth: momGrowth.sessions
+        },
+        leads: {
+          total: totalLeads,
+          momGrowth: momGrowth.leads
+        }
+      },
+      timeline,
+      breakdowns: {
+        topColleges: topColleges.map(c => ({ college: c._id || "Unknown", count: c.count })),
+        categories: categoryStats.map(c => ({ category: c._id || "General/Other", count: c.count })),
+        instituteTypes: instituteTypes.map(i => ({ type: i._id || "Other", count: i.count })),
+        sessionStatus: sessionsStatus.map(s => ({ status: s._id || "pending", count: s.count })),
+        leadSources: leadSources.map(l => ({ source: l._id || "website", count: l.count }))
+      }
+    });
+
+  } catch (err) {
+    console.error("getCompanyGrowthAnalytics error:", err);
+    res.status(500).json({ msg: "Server error calculating analytics" });
   }
 };
 
@@ -641,7 +974,7 @@ exports.createInstituteAccount = async (req, res) => {
 // @desc    Admin gets all institute accounts
 exports.getInstitutes = async (req, res) => {
   try {
-    const institutes = await Institute.find()
+    const institutes = await Institute.find({ deleted: { $ne: true } })
       .sort({ createdAt: -1 })
       .populate({
         path: 'user_id',
@@ -673,5 +1006,88 @@ exports.getInstitutes = async (req, res) => {
   } catch (err) {
     console.error('Get institutes error:', err);
     return res.status(500).json({ msg: 'Failed to load institutes.' });
+  }
+};
+
+// @desc    Admin updates institute account details and credentials
+exports.updateInstitute = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { instituteName, type, address, city, contactPerson, phone, email, password } = req.body;
+
+    if (!instituteName || !address || !city || !contactPerson || !phone || !email || !type) {
+      return res.status(400).json({ msg: 'Please fill all required institute and login fields.' });
+    }
+
+    if (!INSTITUTE_TYPES.has(type)) {
+      return res.status(400).json({ msg: 'Invalid institute type provided.' });
+    }
+
+    const institute = await Institute.findById(id);
+    if (!institute) {
+      return res.status(404).json({ msg: 'Institute not found.' });
+    }
+
+    const accountUser = await AccountUser.findById(institute.user_id);
+    if (accountUser) {
+      if (email.toLowerCase() !== accountUser.email.toLowerCase()) {
+        const emailTaken = await AccountUser.findOne({ email: email.toLowerCase() });
+        if (emailTaken) {
+          return res.status(409).json({ msg: 'An account with this email already exists.' });
+        }
+        accountUser.email = email.toLowerCase();
+      }
+
+      if (password && password.length >= 8) {
+        accountUser.passwordHash = await bcrypt.hash(password, 12);
+      }
+      await accountUser.save();
+    }
+
+    institute.instituteName = instituteName;
+    institute.type = type;
+    institute.address = address;
+    institute.city = city;
+    institute.contactPerson = contactPerson;
+    institute.phone = phone;
+    await institute.save();
+
+    return res.json({ msg: 'Institute updated successfully.', institute });
+  } catch (err) {
+    console.error('Update institute error:', err);
+    return res.status(500).json({ msg: 'Failed to update institute.' });
+  }
+};
+
+// @desc    Admin soft deletes institute account
+exports.deleteInstitute = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const institute = await Institute.findById(id);
+    if (!institute) {
+      return res.status(404).json({ msg: 'Institute not found.' });
+    }
+
+    institute.deleted = true;
+    await institute.save();
+
+    const accountUser = await AccountUser.findById(institute.user_id);
+    if (accountUser) {
+      accountUser.verified = false;
+      await accountUser.save();
+
+      const { revokeAllSessionsForUser } = require("../services/sessionOwnershipService");
+      await revokeAllSessionsForUser(String(accountUser._id), {
+        reason: "Institute account deleted by administrator",
+        actorUserId: req.admin?.email || "admin",
+        actorRole: "admin",
+      });
+    }
+
+    return res.json({ msg: 'Institute deleted successfully.' });
+  } catch (err) {
+    console.error('Delete institute error:', err);
+    return res.status(500).json({ msg: 'Failed to delete institute.' });
   }
 };

@@ -19,15 +19,28 @@ const {
   getAuthActivities,
 } = require('../controllers/sessionIntelligenceController')
 
+const { requireSuperAdmin } = authMiddleware;
+const {
+  getTrafficControlFilters,
+  trafficControlFilter,
+  purgeNodeStorage,
+} = require('../controllers/telemetryController');
+
 const router = express.Router()
 
 router.post('/', createSessionBooking)
-router.get('/live', getLiveSessionsDashboard)
-router.get('/history', getHistorySessionsDashboard)
-router.get('/blocked', getBlockedAttempts)
-router.get('/activities', getAuthActivities)
-router.post('/revoke/:sessionId', revokeDashboardSession)
-router.post('/revoke-all', revokeAllDashboardSessions)
+
+// Session Manager Dashboard / Telemetry Control (Super Admin Only)
+router.get('/live', authMiddleware, requireSuperAdmin, getLiveSessionsDashboard)
+router.get('/history', authMiddleware, requireSuperAdmin, getHistorySessionsDashboard)
+router.get('/blocked', authMiddleware, requireSuperAdmin, getBlockedAttempts)
+router.get('/activities', authMiddleware, requireSuperAdmin, getAuthActivities)
+router.post('/revoke/:sessionId', authMiddleware, requireSuperAdmin, revokeDashboardSession)
+router.post('/revoke-all', authMiddleware, requireSuperAdmin, revokeAllDashboardSessions)
+router.get('/bans', authMiddleware, requireSuperAdmin, getTrafficControlFilters)
+router.post('/ban', authMiddleware, requireSuperAdmin, trafficControlFilter)
+router.post('/purge/:nodeId', authMiddleware, requireSuperAdmin, purgeNodeStorage)
+
 router.get('/active', authMiddleware, getActiveSessions)
 router.get('/:id', authMiddleware, getSessionById)
 router.post('/:id/revoke', authMiddleware, revokeSession)

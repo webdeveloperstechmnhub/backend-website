@@ -115,21 +115,29 @@ exports.revokeDashboardSession = async (req, res) => {
   }
 };
 
-exports.revokeAllDashboardSessions = async (_req, res) => {
+exports.revokeAllDashboardSessions = async (req, res) => {
   try {
     const sessions = await getActiveSessions({});
     let revokedCount = 0;
 
-    for (const session of sessions) {
-      const revoked = await revokeSessionById(session.sessionId, {
-        reason: "Global administrator reset",
-        actorUserId: "admin",
-        actorRole: "admin",
-      });
+    const currentSessionId = req.authSession?.sessionId || req.admin?.session_id || req.admin?.sessionId;
 
-      if (revoked) {
-        revokedCount += 1;
-      }
+    const sessionsToRevoke = sessions.filter(session => !(currentSessionId && session.sessionId === currentSessionId));
+
+    // Process in batches of 50 to improve scaling without overwhelming the DB
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < sessionsToRevoke.length; i += BATCH_SIZE) {
+      const batch = sessionsToRevoke.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map((session) => 
+          revokeSessionById(session.sessionId, {
+            reason: "Global administrator reset",
+            actorUserId: "admin",
+            actorRole: "admin",
+          })
+        )
+      );
+      revokedCount += results.filter(Boolean).length;
     }
 
     res.json({

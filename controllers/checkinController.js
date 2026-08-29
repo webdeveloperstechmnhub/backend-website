@@ -225,13 +225,15 @@ const normalizeEmployeeInput = (source = {}, fallbackEmpId = "") => {
     department: String(source.department || "").trim(),
     description: String(source.description || "").trim(),
     adminAccess: isTruthy(source.adminAccess),
+    role: String(source.role || "employee").trim(),
+    permissions: Array.isArray(source.permissions) ? source.permissions.map(p => String(p).trim()) : [],
   };
 };
 
 // Create or update employee by empId
 exports.upsertEmployee = async (req, res) => {
   try {
-    const { empId, name, photoUrl, mobile, email, joiningDate, designation, department, description, adminAccess } = normalizeEmployeeInput(req.body);
+    const { empId, name, photoUrl, mobile, email, joiningDate, designation, department, description, adminAccess, role, permissions } = normalizeEmployeeInput(req.body);
     const autoGeneratePassword = isTruthy(req.body?.autoGeneratePassword);
     const manualPassword = String(req.body?.password || req.body?.manualPassword || '').trim();
     const sendEmailFlag = req.body?.sendEmail === undefined ? true : isTruthy(req.body?.sendEmail);
@@ -261,6 +263,8 @@ exports.upsertEmployee = async (req, res) => {
         description,
         adminAccess: hasAdminAccessField ? adminAccess : existingEmployee?.adminAccess || false,
         accountStatus: existingEmployee?.accountStatus || 'active',
+        role,
+        permissions,
         updatedAt: new Date(),
       },
       {
@@ -504,35 +508,44 @@ exports.updateEmployee = async (req, res) => {
       return res.status(400).json({ msg: "empId required" });
     }
 
-    const payload = normalizeEmployeeInput(req.body, empId);
+    const employeeToUpdate = await Employee.findOne({ empId });
+    if (!employeeToUpdate) {
+      return res.status(404).json({ msg: "Employee not found" });
+    }
 
     if (req.body.empId && String(req.body.empId).trim() !== empId) {
       return res.status(400).json({ msg: "Employee ID cannot be changed" });
     }
 
-    if (!payload.name) {
-      return res.status(400).json({ msg: "name is required" });
+    const updateData = {};
+    const updatableFields = ['name', 'photoUrl', 'mobile', 'email', 'joiningDate', 'designation', 'department', 'description', 'role', 'permissions', 'accountStatus', 'adminAccess', 'status'];
+
+    for (const field of updatableFields) {
+      if (req.body[field] !== undefined) {
+         if (field === 'permissions') {
+            updateData[field] = Array.isArray(req.body[field]) ? req.body[field].map(p => String(p).trim()) : [];
+         } else if (field === 'adminAccess') {
+            updateData[field] = isTruthy(req.body[field]);
+         } else if (field === 'joiningDate') {
+            const date = req.body[field] ? new Date(req.body[field]) : null;
+            updateData[field] = date && !Number.isNaN(date.getTime()) ? date : null;
+         } else if (field === 'name') {
+            const name = String(req.body.name || "").trim();
+            if (!name) return res.status(400).json({ msg: "name cannot be empty" });
+            updateData[field] = name;
+         } else if (field === 'status' || field === 'accountStatus') {
+            updateData['accountStatus'] = String(req.body[field] || "").trim();
+         } else {
+            updateData[field] = String(req.body[field] || "").trim();
+         }
+      }
     }
+    updateData.updatedAt = new Date();
 
     const employee = await Employee.findOneAndUpdate(
       { empId },
-      {
-        empId,
-        name: payload.name,
-        photoUrl: payload.photoUrl,
-        mobile: payload.mobile,
-        email: payload.email,
-        joiningDate: payload.joiningDate,
-        designation: payload.designation,
-        department: payload.department,
-        description: payload.description,
-        updatedAt: new Date(),
-        ...(Object.prototype.hasOwnProperty.call(req.body || {}, 'adminAccess') ? { adminAccess: isTruthy(req.body.adminAccess) } : {}),
-      },
-      {
-        returnDocument: "after",
-        runValidators: true,
-      },
+      { $set: updateData },
+      { returnDocument: "after", runValidators: true }
     );
 
     if (!employee) {

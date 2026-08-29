@@ -14,6 +14,8 @@
 const Ambassador = require('../models/Ambassador')
 const AmbassadorActivity = require('../models/AmbassadorActivity')
 const AmbassadorLevel = require('../models/AmbassadorLevel')
+const AmbassadorApplication = require('../models/AmbassadorApplication')
+const AmbassadorReferral = require('../models/AmbassadorReferral')
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -258,6 +260,89 @@ async function awardXp(opts) {
 }
 
 // ---------------------------------------------------------------------------
+// Self-Healing & Data Synchronization
+// ---------------------------------------------------------------------------
+
+/**
+ * Scans for approved applications that do not have a corresponding Ambassador record,
+ * and creates them along with their referral code and welcome bonus.
+ */
+async function healDesyncedAmbassadors() {
+  try {
+    // Find all approved applications
+    const approvedApplications = await AmbassadorApplication.find({ status: 'approved' })
+    if (approvedApplications.length === 0) return
+
+    for (const app of approvedApplications) {
+      // Check if an Ambassador record already exists for this application
+      const existingAmb = await Ambassador.findOne({
+        $or: [
+          { applicationId: app._id },
+          { email: app.email },
+          { mobileNumber: app.mobileNumber },
+        ]
+      })
+
+      if (!existingAmb) {
+        console.log(`[Self-Healing] Detected desynced approved application: ${app.fullName} (${app.email || 'No Email'}). Recreating Ambassador account...`)
+
+        // Generate referral code
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+        const digits = '23456789'
+        const rand = () => Math.random().toString(36).slice(2, 6).toUpperCase()
+        const part1 = alphabet[Math.floor(Math.random() * alphabet.length)] + alphabet[Math.floor(Math.random() * alphabet.length)]
+        const part2 = digits[Math.floor(Math.random() * digits.length)] + digits[Math.floor(Math.random() * digits.length)]
+        const referralCode = `TMH-${part1}${part2}-${rand()}`
+
+        // Create Ambassador record
+        const ambassador = await Ambassador.create({
+          applicationId: app._id,
+          fullName: app.fullName,
+          schoolId: app.schoolId,
+          className: app.className,
+          city: app.city,
+          mobileNumber: app.mobileNumber,
+          instagramId: app.instagramId,
+          email: app.email || `healed_${app._id}@school.com`, // Email fallback if undefined
+          photo: app.photo || '',
+          avatar: app.avatar || '',
+          approved: true,
+          points: 0,
+          badges: [],
+          welcomeBonusAwarded: false,
+          referralCode,
+          createdByAdmin: app.reviewedByAdmin || 'System Healer',
+        })
+
+        // Persist referral link record
+        await AmbassadorReferral.findOneAndUpdate(
+          { ambassadorId: ambassador._id },
+          {
+            $setOnInsert: {
+              ambassadorId: ambassador._id,
+              referralCode,
+              referralLink: '',
+              createdByAdmin: app.reviewedByAdmin || 'System Healer',
+            },
+          },
+          { upsert: true }
+        )
+
+        // Award welcome bonus
+        await awardWelcomeBonus(ambassador._id)
+
+        console.log(`[Self-Healing] Successfully healed ambassador record for: ${app.fullName}`)
+      } else if (!existingAmb.applicationId) {
+        // Just sync the applicationId if it was missing
+        await Ambassador.updateOne({ _id: existingAmb._id }, { $set: { applicationId: app._id } })
+      }
+    }
+  } catch (err) {
+    console.error('[Self-Healing] Error running desynced ambassador healing:', err)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -271,4 +356,5 @@ module.exports = {
   resolveBadges,
   awardWelcomeBonus,
   awardXp,
+  healDesyncedAmbassadors,
 }

@@ -187,20 +187,7 @@ const calculateReferralDiscount = async ({ targetEvent, email, referralCode, bas
     throw new Error('Invalid referral code.');
   }
 
-  if (referral.maxUses > 0 && referral.usedCount >= referral.maxUses) {
-    throw new Error('Referral code usage limit reached.');
-  }
-
-  const alreadyUsed = await User.findOne({
-    email,
-    eventId: String(targetEvent._id),
-    referralCode: code,
-    referralCodeApplied: true,
-  });
-
-  if (alreadyUsed) {
-    throw new Error('This referral code has already been used by this user.');
-  }
+  // maxUses and alreadyUsed checks removed to allow multiple uses of referral codes
 
   const rawDiscount = referral.discountType === 'percent'
     ? Math.round((baseAmount * referral.discountValue) / 100)
@@ -324,19 +311,9 @@ exports.registerUser = async (req, res) => {
       matchedReferral = referralResult.referral;
 
       if (resolvedTicketType.price > 0 && incomingAmountPaid !== payableAmount) {
-        // Allow a registration to proceed when referral discount reduces payable to 0.
-        // Some clients may still POST the original amount; treat payable=0 as authoritative
-        // and proceed while logging a warning instead of rejecting the request.
-        if (payableAmount === 0) {
-          console.info(`PRICE MISMATCH (tolerated): event=${targetEvent?._id || 'unknown'} email=${email || 'unknown'} incoming=${incomingAmountPaid} payable=${payableAmount} referral=${normalizedReferralCode || 'none'}`);
-        } else {
-          return res.status(400).json({
-            msg: `Invalid ticket price. Expected Rs ${payableAmount} after referral discount.`,
-            expectedAmount: payableAmount,
-            originalAmount: originalAmountPaid,
-            referralDiscountAmount,
-          });
-        }
+        // The backend is authoritative on pricing.
+        // Tolerate any mismatch (e.g. frontend sending base price instead of discounted price).
+        console.info(`PRICE MISMATCH (tolerated - using backend truth): event=${targetEvent?._id || 'unknown'} email=${email || 'unknown'} incoming=${incomingAmountPaid} payable=${payableAmount} referral=${normalizedReferralCode || 'none'}`);
       }
 
       if (resolvedTicketType.total > 0) {

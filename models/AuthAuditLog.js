@@ -5,7 +5,7 @@ const authAuditLogSchema = new mongoose.Schema(
     actorUserId: { type: String, required: true, index: true },
     actorRole: {
       type: String,
-      enum: ["admin", "institute", "student", "employee", "system"],
+      enum: ["admin", "institute", "student", "employee", "system", "super_admin"],
       default: "system",
       index: true,
     },

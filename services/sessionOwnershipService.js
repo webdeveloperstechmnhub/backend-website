@@ -247,14 +247,21 @@ const revokeAllSessionsForUser = async (
     expiresAt: { $gt: new Date() },
   });
 
-  for (const session of sessions) {
-    await revokeSessionById(session.sessionId, {
-      reason,
-      actorUserId,
-      actorRole,
-      ipAddress,
-      userAgent,
-    });
+  // Process in batches of 50 to improve scaling
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < sessions.length; i += BATCH_SIZE) {
+    const batch = sessions.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(session => 
+        revokeSessionById(session.sessionId, {
+          reason,
+          actorUserId,
+          actorRole,
+          ipAddress,
+          userAgent,
+        })
+      )
+    );
   }
 
   await logAuthEvent({

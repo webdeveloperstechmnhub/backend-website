@@ -32,6 +32,15 @@ const employeeSchema = new mongoose.Schema({
   terminationDate: { type: Date, default: null },
   terminationReason: { type: String, default: "" },
   terminationLetterSentAt: { type: Date, default: null },
+  role: {
+    type: String,
+    default: "employee",
+    index: true,
+  },
+  permissions: {
+    type: [String],
+    default: [],
+  },
   createdAt: {
     type: Date,
     default: Date.now,

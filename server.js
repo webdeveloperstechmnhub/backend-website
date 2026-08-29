@@ -1,5 +1,6 @@
 require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 const express = require("express");
+const path = require("path");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -16,11 +17,11 @@ const accountRoutes = require("./routes/accountRoutes");
 const siteRoutes = require("./routes/siteRoutes");
 const studentSignupRoutes = require("./routes/studentSignupRoutes");
 const { ensureSeedEventsIfEmpty } = require("./controllers/eventController");
-const seedAdminIfMissing = require("./utils/seedAdmin");
 const sessionRoutes = require("./routes/sessionRoutes");
 const employeeAuthRoutes = require("./routes/employeeAuthRoutes");
 const ambassadorRoutes = require("./routes/ambassadorRoutes");
 const adminAmbassadorRoutes = require("./routes/adminAmbassadorRoutes");
+const certificateRoutes = require("./routes/certificateRoutes");
 
 const app = express();
 
@@ -82,11 +83,6 @@ mongoose
     } catch (err) {
       console.error("❌ Seed event verification failed:", err);
     }
-    try {
-      await seedAdminIfMissing();
-    } catch (err) {
-      console.error("❌ Admin seed failed:", err);
-    }
   })
   .catch((err) => {
     console.error("❌ MongoDB Connection Error:", err);
@@ -107,6 +103,13 @@ app.use("/api/sessions", sessionRoutes); // Session booking management
 app.use("/api", studentSignupRoutes); // Student signup flow
 app.use('/api/employee', employeeAuthRoutes);
 app.use("/api/ambassador", ambassadorRoutes); // Ambassador program
+app.use("/api/certificate", certificateRoutes); // Certificate verification
+
+// 🟢 Admin Panel Static Serving
+app.use('/admin', express.static(path.join(__dirname, '../admin2/dist')));
+app.get([ '/admin', /^\/admin\/.*/ ], (req, res) => {
+  res.sendFile(path.join(__dirname, '../admin2/dist', 'index.html'));
+});
 
 // 🟢 Server Start
 const PORT = process.env.PORT || 5000;

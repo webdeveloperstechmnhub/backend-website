@@ -249,9 +249,12 @@ exports.rejectAmbassadorApplication = async (req, res) => {
 
 exports.listActiveAmbassadors = async (req, res) => {
   try {
+    // Proactively heal any desynced approved applications on-the-fly
+    await xpService.healDesyncedAmbassadors()
+
     const items = await Ambassador.find({ approved: true })
       .populate('schoolId', 'name')
-      .sort({ points: -1 })
+      .sort({ points: -1, createdAt: 1, _id: 1 })
     res.json({ ambassadors: items })
   } catch (err) {
     console.error('listActiveAmbassadors error:', err)

@@ -38,14 +38,70 @@ exports.applyAmbassador = async (req, res) => {
     if (why.length < 20) return res.status(400).json({ msg: 'Why do you want to join? (min 20 chars)' })
     if (skills.length < 10) return res.status(400).json({ msg: 'Skills/Interests (min 10 chars)' })
 
-    const existing = await AmbassadorApplication.findOne({
+    console.log(`[Ambassador Application] Incoming registration request. Email: ${email}, Phone: ${mobileNumber}, Instagram ID: @${instagramId}`)
+
+    // ── 1. Check if an active account already exists in the Ambassador collection ──────────
+    const existingAmbassador = await Ambassador.findOne({
+      $or: [{ mobileNumber }, { instagramId }, { email }],
+    })
+
+    if (existingAmbassador) {
+      if (existingAmbassador.email === email) {
+        console.warn(`[Ambassador Application] Conflict: Email ${email} is already registered as an active ambassador.`)
+        return res.status(409).json({
+          code: 'EMAIL_ALREADY_REGISTERED',
+          message: 'This email is already associated with an ambassador account.',
+        })
+      }
+      if (existingAmbassador.mobileNumber === mobileNumber) {
+        console.warn(`[Ambassador Application] Conflict: Mobile ${mobileNumber} is already registered as an active ambassador.`)
+        return res.status(409).json({
+          code: 'PHONE_ALREADY_REGISTERED',
+          message: 'This mobile number is already associated with an ambassador account.',
+        })
+      }
+      if (existingAmbassador.instagramId === instagramId) {
+        console.warn(`[Ambassador Application] Conflict: Instagram @${instagramId} is already registered as an active ambassador.`)
+        return res.status(409).json({
+          code: 'INSTAGRAM_ALREADY_REGISTERED',
+          message: 'This Instagram ID is already associated with an ambassador account.',
+        })
+      }
+    }
+
+    // ── 2. Check if a pending or approved application already exists in AmbassadorApplication ──
+    const existingApplication = await AmbassadorApplication.findOne({
       $or: [{ mobileNumber }, { instagramId }, { email }],
       status: { $in: ['pending', 'approved'] },
     })
 
-    if (existing) {
-      return res.status(409).json({ msg: 'An application already exists for this student.' })
+    if (existingApplication) {
+      console.warn(`[Ambassador Application] Conflict: Existing application found for this student. Status: ${existingApplication.status}`)
+      if (existingApplication.email === email) {
+        return res.status(409).json({
+          code: 'AMBASSADOR_ALREADY_EXISTS',
+          message: 'You have already submitted an ambassador application with this email.',
+        })
+      }
+      if (existingApplication.mobileNumber === mobileNumber) {
+        return res.status(409).json({
+          code: 'AMBASSADOR_ALREADY_EXISTS',
+          message: 'You have already submitted an ambassador application with this mobile number.',
+        })
+      }
+      if (existingApplication.instagramId === instagramId) {
+        return res.status(409).json({
+          code: 'AMBASSADOR_ALREADY_EXISTS',
+          message: 'You have already submitted an ambassador application with this Instagram ID.',
+        })
+      }
+      return res.status(409).json({
+        code: 'AMBASSADOR_ALREADY_EXISTS',
+        message: 'You have already submitted an ambassador application.',
+      })
     }
+
+    console.log(`[Ambassador Application] Diagnostic checks passed. Proceeding with school mapping and record creation...`)
 
     let school = await AmbassadorSchool.findOne({ name: schoolName })
     if (!school) {
@@ -146,17 +202,20 @@ exports.applyAmbassador = async (req, res) => {
 
 exports.getAmbassadorLeaderboard = async (req, res) => {
   try {
+    // Proactively heal any desynced approved applications on-the-fly
+    await xpService.healDesyncedAmbassadors()
+
     const category = String(req.query?.category || 'top_ambassadors').trim()
 
     const ambassadors = await Ambassador.find({ approved: true })
       .populate('schoolId', 'name')
-      .sort({ points: -1 })
+      .sort({ points: -1, createdAt: 1, _id: 1 })
       .limit(200)
 
     let ranked = ambassadors.map((a, idx) => ({
       rank: idx + 1,
       id: a._id,
-      name: a.fullName,
+      name: a.fullName || 'Anonymous Ambassador',
       schoolName: a.schoolId?.name || '',
       points: a.points,
       badges: a.badges || [],
@@ -171,7 +230,12 @@ exports.getAmbassadorLeaderboard = async (req, res) => {
         schoolAgg.set(key, prev)
       }
       ranked = Array.from(schoolAgg.values())
-        .sort((a, b) => b.points - a.points)
+        .sort((a, b) => {
+          if (b.points !== a.points) {
+            return b.points - a.points
+          }
+          return String(a.schoolName).localeCompare(String(b.schoolName))
+        })
         .slice(0, 30)
         .map((x, idx) => ({ rank: idx + 1, id: `${x.schoolName}-${idx}`, name: x.schoolName, schoolName: x.schoolName, points: x.points, badges: [] }))
     }
@@ -193,6 +257,9 @@ exports.getAmbassadorLeaderboard = async (req, res) => {
 
 exports.getAmbassadorDashboard = async (req, res) => {
   try {
+    // Proactively heal any desynced approved applications on-the-fly
+    await xpService.healDesyncedAmbassadors()
+
     const referralCode = String(req.query?.code || req.query?.referralCode || req.headers['x-ambassador-code'] || '').trim().toUpperCase()
     const sessionEmail = String(req.studentUser?.email || '').trim().toLowerCase()
     const email = sessionEmail || String(req.query?.email || '').trim().toLowerCase()
@@ -242,7 +309,7 @@ exports.getAmbassadorDashboard = async (req, res) => {
     const allRewards = await AmbassadorReward.find({ levelNumber: { $lte: currentLevel.levelNumber } })
 
     // ── Leaderboard rank ──────────────────────────────────────────────────────
-    const all = await Ambassador.find({ approved: true }).sort({ points: -1 }).select('_id')
+    const all = await Ambassador.find({ approved: true }).sort({ points: -1, createdAt: 1, _id: 1 }).select('_id')
     const leaderboardRank = all.findIndex((x) => String(x._id) === String(ambassador._id)) + 1
 
     return res.json({

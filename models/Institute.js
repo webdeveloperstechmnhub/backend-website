@@ -14,6 +14,7 @@ const instituteSchema = new mongoose.Schema(
     contactPerson: { type: String, required: true, trim: true },
     phone: { type: String, required: true, trim: true },
     verified: { type: Boolean, default: true },
+    deleted: { type: Boolean, default: false, index: true },
   },
   { timestamps: true },
 );
