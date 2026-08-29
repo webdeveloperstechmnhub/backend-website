@@ -52,7 +52,7 @@ function computeThreeMonthGap(startDateInput) {
   const startYear = startObj.getFullYear();
   const formattedStartDate = `${String(startDay).padStart(2, "0")} ${MONTH_NAMES[startMonthIndex]} ${startYear}`;
 
-  const targetMonth = startMonthIndex + 3;
+  const targetMonth = startMonthIndex + 2;
   const targetYear = startYear + Math.floor(targetMonth / 12);
   const normalizedMonth = targetMonth % 12;
   const daysInTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
@@ -386,5 +386,23 @@ exports.verifyCertificate = async (req, res) => {
       message: "Fake Certificate: Verification error occurred.",
       error: error.message,
     });
+  }
+};
+
+// Get list of active employees for certificate generation
+exports.getEmployees = async (req, res) => {
+  try {
+    const employees = await Employee.find({ employmentStatus: { $ne: "terminated" } })
+      .select("empId name designation department joiningDate createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: employees,
+    });
+  } catch (error) {
+    console.error("Get Certificate Employees Error:", error);
+    res.status(500).json({ success: false, message: "Server Error", error: error.message });
   }
 };

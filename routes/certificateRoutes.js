@@ -7,6 +7,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 router.get("/verify/:id", certificateController.verifyCertificate);
 
 // Protected Admin / Certificate Management routes
+router.get("/employees", authMiddleware, certificateController.getEmployees);
 router.post("/issue", authMiddleware, certificateController.issueCertificate);
 router.post("/batch-issue", authMiddleware, certificateController.batchIssueCertificates);
 router.get("/list", authMiddleware, certificateController.getCertificates);
