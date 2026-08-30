@@ -44,6 +44,7 @@ app.use(
       "https://techmnhub-gamma.vercel.app",
       "https://techmnhub-admin.vercel.app",
       "https://techmnhub.com",
+      "https://techmnhub.com/*",
       "https://www.techmnhub.com",
       "https://checkin-system.pages.dev",
       "https://tickets-generator.pages.dev",
@@ -107,7 +108,7 @@ app.use("/api/certificate", certificateRoutes); // Certificate verification
 
 // 🟢 Admin Panel Static Serving
 app.use('/admin', express.static(path.join(__dirname, '../admin2/dist')));
-app.get([ '/admin', /^\/admin\/.*/ ], (req, res) => {
+app.get(['/admin', /^\/admin\/.*/], (req, res) => {
   res.sendFile(path.join(__dirname, '../admin2/dist', 'index.html'));
 });
 
