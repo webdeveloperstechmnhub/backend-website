@@ -12,6 +12,9 @@ router.post("/issue", authMiddleware, certificateController.issueCertificate);
 router.post("/batch-issue", authMiddleware, certificateController.batchIssueCertificates);
 router.get("/list", authMiddleware, certificateController.getCertificates);
 router.get("/:id", authMiddleware, certificateController.getCertificateById);
+router.put("/:id", authMiddleware, certificateController.updateCertificate);
 router.delete("/:id", authMiddleware, certificateController.deleteCertificate);
+router.post("/send-email", authMiddleware, certificateController.sendCertificateEmail);
+router.post("/:id/send-email", authMiddleware, certificateController.sendCertificateEmail);
 
 module.exports = router;

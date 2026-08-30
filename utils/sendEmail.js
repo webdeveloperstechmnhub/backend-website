@@ -214,4 +214,5 @@ const sendEmail = async ({ to, subject, html, attachments = [] }) => {
   );
 };
 
+sendEmail.sendEmail = sendEmail;
 module.exports = sendEmail;

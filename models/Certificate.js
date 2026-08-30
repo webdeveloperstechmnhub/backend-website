@@ -19,6 +19,11 @@ const certificateSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
+  email: {
+    type: String,
+    trim: true,
+    default: "",
+  },
   role: {
     type: String,
     required: true,
