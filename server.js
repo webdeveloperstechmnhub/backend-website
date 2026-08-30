@@ -134,7 +134,8 @@ mongoose
 app.use("/api/register", registrationRoutes);
 app.use("/api/payment", paymentRoutes); // ✅ बिना auth के
 app.use('/api/admin/ambassadors', adminAmbassadorRoutes);
-app.use("/api/admin", adminRoutes); // admin route (यदि है तो)
+app.use("/api/admin", adminRoutes);
+app.use("/admin", adminRoutes); // Direct alias
 app.use("/api/ticket", offlineTicketRoutes); // Offline ticket generator
 app.use("/api/checkin", checkinRoutes); // Check-in system
 app.use("/api/events", eventRoutes); // Event management
@@ -143,8 +144,10 @@ app.use("/api/site", siteRoutes); // Homepage and site content
 app.use("/api/sessions", sessionRoutes); // Session booking management
 app.use("/api", studentSignupRoutes); // Student signup flow
 app.use('/api/employee', employeeAuthRoutes);
+app.use('/employee', employeeAuthRoutes); // Direct alias
 app.use("/api/ambassador", ambassadorRoutes); // Ambassador program
 app.use("/api/certificate", certificateRoutes); // Certificate verification
+app.use("/certificate", certificateRoutes); // Direct alias
 
 // 🟢 Admin Panel Static Serving
 app.use('/admin', express.static(path.join(__dirname, '../admin2/dist')));
