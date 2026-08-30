@@ -58,6 +58,7 @@ const allowedOrigins = [
   "https://admin-techmnhub.pages.dev",
   "https://session-manager-atex.onrender.com",
   "https://session-manager.tpriyansh973.workers.dev",
+  "https://admin.techmnhub.com"
 ];
 
 app.use(
