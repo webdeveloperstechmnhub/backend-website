@@ -28,35 +28,74 @@ const app = express();
 app.set('trust proxy', 1);
 
 // 🔐 Security Middlewares
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:3000",
+  "http://localhost:8080",
+  "http://localhost:5175",
+  "http://localhost:5176",
+  "http://127.0.0.1:8080",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+  "http://127.0.0.1:5500",
+  "null",
+  "https://techmnhub-gamma.vercel.app",
+  "https://techmnhub-admin.vercel.app",
+  "https://techmnhub.com",
+  "https://www.techmnhub.com",
+  "https://checkin-system.pages.dev",
+  "https://tickets-generator.pages.dev",
+  "https://techmnhub-1.pages.dev",
+  "https://techmnhub-frontend.pages.dev",
+  "https://admin-techmnhub.pages.dev",
+  "https://session-manager-atex.onrender.com",
+  "https://session-manager.tpriyansh973.workers.dev",
+];
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:3000",
-      "http://localhost:8080",
-      "http://localhost:5175",
-      "http://localhost:5176",      // For ticket generator
-      "http://127.0.0.1:8080",      // For ticket generator
-      "null",                        // For file:// protocol
-      "https://techmnhub-gamma.vercel.app",
-      "https://techmnhub-admin.vercel.app",
-      "https://techmnhub.com",
-      "https://techmnhub.com/*",
-      "https://www.techmnhub.com",
-      "https://checkin-system.pages.dev",
-      "https://tickets-generator.pages.dev",
-      "https://techmnhub-1.pages.dev",
-      "https://techmnhub-frontend.pages.dev",
-      "https://admin-techmnhub.pages.dev",
-      "https://session-manager-atex.onrender.com",
-      "http://127.0.0.1:5500",
-      "https://session-manager.tpriyansh973.workers.dev"
-    ],
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
+
+      // Check explicit allowed list
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+
+      // Allow local Wi-Fi / LAN IPs for mobile device testing (192.168.x.x, 10.x.x.x, 172.16-31.x.x, localhost)
+      if (
+        /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
+          origin
+        )
+      ) {
+        return callback(null, true);
+      }
+
+      // Allow official domains and previews (techmnhub.com, vercel, pages.dev, ngrok)
+      if (
+        /^https?:\/\/([a-zA-Z0-9-]+\.)*(techmnhub\.com|pages\.dev|vercel\.app|ngrok-free\.app|loca\.lt)(:\d+)?$/.test(
+          origin
+        ) ||
+        /^capacitor:\/\/localhost/.test(origin) ||
+        /^ionic:\/\/localhost/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+
+      // Public verification can be embedded or queried from any client
+      return callback(null, true);
+    },
     credentials: true,
-  }),
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+  })
 );
 
 app.use(express.json({ limit: "10mb" }));
