@@ -154,7 +154,7 @@ exports.trafficControlFilter = async (req, res) => {
     const filter = await TelemetryFilter.findOneAndUpdate(
       { filterKey, filterType },
       { $set: { logNote: logNote || "Restricted via Operations Console", active: true } },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     // Immediately scan and terminate any active session matching this ban key

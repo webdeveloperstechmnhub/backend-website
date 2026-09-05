@@ -38,7 +38,7 @@ async function run() {
     const result = await AmbassadorLevel.findOneAndUpdate(
       { levelNumber: lvl.levelNumber },
       { $set: { name: lvl.name, pointsNeeded: lvl.pointsNeeded } },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     )
     console.log(`  Level ${lvl.levelNumber}: "${result.name}" → pointsNeeded=${result.pointsNeeded}`)
   }

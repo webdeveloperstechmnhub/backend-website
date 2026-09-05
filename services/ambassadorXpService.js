@@ -155,7 +155,7 @@ async function awardWelcomeBonus(ambassadorId) {
       $inc: { points: WELCOME_BONUS_XP },
       $set: { welcomeBonusAwarded: true },
     },
-    { new: true }
+    { returnDocument: 'after' }
   )
 
   if (!updatedAmbassador) {
@@ -235,7 +235,7 @@ async function awardXp(opts) {
   const updatedAmbassador = await Ambassador.findByIdAndUpdate(
     ambassadorId,
     { $inc: { points: xp } },
-    { new: true }
+    { returnDocument: 'after' }
   )
 
   if (!updatedAmbassador) throw new Error(`Ambassador not found: ${ambassadorId}`)

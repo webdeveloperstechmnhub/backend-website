@@ -52,6 +52,19 @@ const certificateSchema = new mongoose.Schema({
     default: "valid",
     index: true,
   },
+  emailSent: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  emailSentAt: {
+    type: Date,
+    default: null,
+  },
+  lastEmailStatus: {
+    type: String,
+    default: "",
+  },
   metadata: {
     type: mongoose.Schema.Types.Mixed,
     default: {},

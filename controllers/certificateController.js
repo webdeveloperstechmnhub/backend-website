@@ -17,46 +17,69 @@ const MONTH_NAMES = [
   "December",
 ];
 
-function formatDateToCertificate(input) {
+function parseDateParts(input) {
   if (!input) {
     const now = new Date();
-    const day = String(now.getDate()).padStart(2, "0");
-    const month = MONTH_NAMES[now.getMonth()];
-    const year = now.getFullYear();
-    return `${day} ${month} ${year}`;
+    return { year: now.getFullYear(), monthIndex: now.getMonth(), day: now.getDate() };
   }
-
-  const d = input instanceof Date ? input : new Date(input);
-  if (isNaN(d.getTime())) {
-    return String(input);
+  if (input instanceof Date) {
+    if (isNaN(input.getTime())) {
+      const now = new Date();
+      return { year: now.getFullYear(), monthIndex: now.getMonth(), day: now.getDate() };
+    }
+    return { year: input.getFullYear(), monthIndex: input.getMonth(), day: input.getDate() };
   }
-
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = MONTH_NAMES[d.getMonth()];
-  const year = d.getFullYear();
-  return `${day} ${month} ${year}`;
+  const str = String(input).trim();
+  // Match ISO YYYY-MM-DD
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return {
+      year: parseInt(isoMatch[1], 10),
+      monthIndex: parseInt(isoMatch[2], 10) - 1,
+      day: parseInt(isoMatch[3], 10),
+    };
+  }
+  // Match DD-MM-YYYY or DD/MM/YYYY
+  const ddmmyyyyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (ddmmyyyyMatch) {
+    return {
+      day: parseInt(ddmmyyyyMatch[1], 10),
+      monthIndex: parseInt(ddmmyyyyMatch[2], 10) - 1,
+      year: parseInt(ddmmyyyyMatch[3], 10),
+    };
+  }
+  // Match DD Month YYYY (e.g. "02 February 2026" or "2 Feb 2026")
+  const textMatch = str.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+  if (textMatch) {
+    const day = parseInt(textMatch[1], 10);
+    const monthStr = textMatch[2].toLowerCase();
+    const idx = MONTH_NAMES.findIndex((m) => m.toLowerCase().startsWith(monthStr.slice(0, 3)));
+    const year = parseInt(textMatch[3], 10);
+    if (idx >= 0) {
+      return { year, monthIndex: idx, day };
+    }
+  }
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return { year: d.getFullYear(), monthIndex: d.getMonth(), day: d.getDate() };
+  }
+  const now = new Date();
+  return { year: now.getFullYear(), monthIndex: now.getMonth(), day: now.getDate() };
 }
 
-function computeThreeMonthGap(startDateInput) {
-  let startObj;
-  if (!startDateInput) {
-    startObj = new Date();
-  } else if (startDateInput instanceof Date) {
-    startObj = new Date(startDateInput.getTime());
-  } else {
-    const parsed = new Date(startDateInput);
-    startObj = isNaN(parsed.getTime()) ? new Date() : parsed;
-  }
+function formatDateToCertificate(input) {
+  const { year, monthIndex, day } = parseDateParts(input);
+  return `${String(day).padStart(2, "0")} ${MONTH_NAMES[monthIndex]} ${year}`;
+}
 
-  const startDay = startObj.getDate();
-  const startMonthIndex = startObj.getMonth();
-  const startYear = startObj.getFullYear();
+function computeThreeMonthGap(startDateInput, durationMonths = 3) {
+  const { year: startYear, monthIndex: startMonthIndex, day: startDay } = parseDateParts(startDateInput);
   const formattedStartDate = `${String(startDay).padStart(2, "0")} ${MONTH_NAMES[startMonthIndex]} ${startYear}`;
 
-  // 3-month duration math: Start Month + 2 (e.g. Feb -> Apr)
-  const targetMonth = startMonthIndex + 2;
+  // 3-Month duration math: Start Month + 3 (e.g. Feb 02 -> May 02)
+  const targetMonth = startMonthIndex + durationMonths;
   const targetYear = startYear + Math.floor(targetMonth / 12);
-  const normalizedMonth = targetMonth % 12;
+  const normalizedMonth = ((targetMonth % 12) + 12) % 12;
   const daysInTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
   const endDay = Math.min(startDay, daysInTargetMonth);
   const formattedEndDate = `${String(endDay).padStart(2, "0")} ${MONTH_NAMES[normalizedMonth]} ${targetYear}`;
@@ -240,7 +263,7 @@ exports.batchIssueCertificates = async (req, res) => {
             createdAt: new Date(),
           },
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
       results.push(updated);
     }
@@ -506,6 +529,26 @@ exports.sendCertificateEmail = async (req, res) => {
       attachments,
     });
 
+    // Update certificate document with email tracking
+    const updatedCert = await Certificate.findOneAndUpdate(
+      {
+        $or: [
+          { certificateId: certId },
+          { certificateId: { $regex: `^${certId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+          { empId: certId },
+        ],
+      },
+      {
+        $set: {
+          emailSent: true,
+          emailSentAt: new Date(),
+          lastEmailStatus: "sent",
+          updatedAt: new Date(),
+        },
+      },
+      { returnDocument: 'after' }
+    );
+
     res.status(200).json({
       success: true,
       message: `Certificate successfully sent to ${targetEmail}.`,
@@ -513,10 +556,31 @@ exports.sendCertificateEmail = async (req, res) => {
         to: targetEmail,
         certificateId: certId,
         hasAttachment: attachments.length > 0,
+        emailSent: true,
+        emailSentAt: updatedCert?.emailSentAt || new Date(),
       },
     });
   } catch (error) {
     console.error("Send Certificate Email Error:", error);
+    const certId = String(req.body?.certificateId || req.params?.id || "").trim();
+    if (certId) {
+      await Certificate.updateOne(
+        {
+          $or: [
+            { certificateId: certId },
+            { certificateId: { $regex: `^${certId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } },
+            { empId: certId },
+          ],
+        },
+        {
+          $set: {
+            lastEmailStatus: `failed: ${error.message || "Unknown error"}`,
+            updatedAt: new Date(),
+          },
+        }
+      ).catch(() => {});
+    }
+
     res.status(500).json({
       success: false,
       message: error.message || "Failed to send certificate email.",
